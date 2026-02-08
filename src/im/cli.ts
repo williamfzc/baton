@@ -131,7 +131,7 @@ export class CLIAdapter extends BaseIMAdapter {
     chatId: string,
     message: IMMessageFormat,
     _options?: IMReplyOptions
-  ): Promise<void> {
+  ): Promise<string> {
     // CLI 直接输出到控制台
     const text = message.text || message.markdown || '';
     if (text) {
@@ -142,11 +142,12 @@ export class CLIAdapter extends BaseIMAdapter {
       console.log(message.code.content);
       console.log('```\n');
     }
+    return 'cli-msg-' + Date.now();
   }
 
-  async sendReply(chatId: string, messageId: string, message: IMMessageFormat): Promise<void> {
+  async sendReply(chatId: string, messageId: string | undefined, message: IMMessageFormat): Promise<string> {
     // CLI 中 reply 和 sendMessage 相同
-    await this.sendMessage(chatId, message);
+    return await this.sendMessage(chatId, message);
   }
 
   async onTaskComplete(session: Session, response: IMResponse): Promise<void> {

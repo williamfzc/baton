@@ -48,7 +48,19 @@ export class CommandDispatcher {
   }
 
   async dispatch(message: IMMessage): Promise<IMResponse> {
+    const trimmed = message.text.trim();
     const command = this.parseCommand(message.text);
+
+    // 💡 优化交互：如果当前有待处理的权限请求，且输入是纯数字，则视为选择选项
+    if (/^\d+$/.test(trimmed)) {
+      const session = await this.sessionManager.getOrCreateSession(message.userId);
+      if (session.pendingPermissions.size > 0) {
+        const requestId = Array.from(session.pendingPermissions.keys())[0];
+        console.log(`[Dispatcher] Numeric input detected during pending permission. Treating as selection.`);
+        return this.sessionManager.resolvePermission(session.id, requestId, trimmed);
+      }
+    }
+
     console.log(
       `[Dispatcher] ${message.userId}: ${command.type} - ${command.raw.substring(0, 30)}`
     );
@@ -153,6 +165,19 @@ export class CommandDispatcher {
   private async handlePrompt(message: IMMessage, command: ParsedCommand): Promise<IMResponse> {
     // 获取或创建会话
     const session = await this.sessionManager.getOrCreateSession(message.userId);
+
+    // 💡 隐式取消逻辑：如果当前有待处理的权限请求，说明用户可能想改需求
+    // 发送新指令会自动取消当前的权限请求和任务
+    if (session.pendingPermissions.size > 0) {
+      console.log(`[Dispatcher] User sent new instruction while permission pending. Cancelling current task...`);
+      await this.sessionManager.stopTask(message.userId); // 这会调用 acpClient.cancelCurrentTask()
+      // 注意：stopTask 会清空 queue.current，并调用 cancelCurrentTask
+      // 待权限请求会在 stopTask 链条中由于 agent 退出/任务终止而被清理吗？
+      // 我们最好显式清理一下
+      for (const [requestId] of session.pendingPermissions) {
+        this.sessionManager.resolvePermission(session.id, requestId, 'cancel'); // 假定 'cancel' 是一种通用拒绝
+      }
+    }
 
     // 加入任务队列
     const result = await this.queueEngine.enqueue(session, command.raw, 'prompt');

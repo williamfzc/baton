@@ -127,30 +127,56 @@ export class FeishuAdapter extends BaseIMAdapter {
   // 处理权限请求，发送交互卡片
   private async handlePermissionRequest(event: any): Promise<void> {
     const { sessionId, requestId, request } = event;
-    const toolName = request.toolCall.title || 'Unknown Action';
+    const toolCall = request.toolCall;
+    const toolName = toolCall.title || 'Unknown Action';
     const options = request.options as any[];
 
     logger.info({ sessionId, requestId, toolName }, 'Handling permission request');
 
-    // 尝试获取 chatId
+    // 尝试获取 chatId 和上一次的消息 ID
     const context = this.messageContext.get(sessionId);
     if (!context) {
       logger.warn(
         { sessionId },
         'No message context found for session, cannot send permission card'
       );
-      // 这里应该有一个 fallback，比如尝试给用户私聊，但现在先跳过
       return;
     }
+
+    // 构建卡片内容
+    const elements: any[] = [
+      {
+        type: 'markdown',
+        content: `Agent 请求执行以下操作：\n**${toolName}**`,
+      },
+    ];
+
+    // 如果有参数细节，展示出来
+    if (toolCall.rawInput) {
+      const details =
+        typeof toolCall.rawInput === 'string'
+          ? toolCall.rawInput
+          : JSON.stringify(toolCall.rawInput, null, 2);
+      elements.push({
+        type: 'markdown',
+        content: `**细节：**\n\`\`\`json\n${details}\n\`\`\``,
+      });
+    }
+
+    elements.push({
+      type: 'markdown',
+      content:
+        '*💡 提示：输入新指令可自动取消本次请求并开始新任务。发送 /stop 可终止任务。*',
+    });
 
     // 构建动态按钮
     const actions = options.map((opt) => ({
       id: `permission_${opt.optionId}`,
-      text: opt.label,
+      text: opt.name,
       style:
-        opt.label.toLowerCase().includes('allow') || opt.label.toLowerCase().includes('yes')
+        opt.name.toLowerCase().includes('allow') || opt.name.toLowerCase().includes('yes')
           ? 'primary'
-          : opt.label.toLowerCase().includes('deny') || opt.label.toLowerCase().includes('no')
+          : opt.name.toLowerCase().includes('deny') || opt.name.toLowerCase().includes('no')
             ? 'danger'
             : 'default',
       value: JSON.stringify({
@@ -163,22 +189,19 @@ export class FeishuAdapter extends BaseIMAdapter {
 
     // 构建通用卡片
     const card: UniversalCard = {
-      title: '⚠️ 权限确认请求',
-      elements: [
-        {
-          type: 'markdown',
-          content: `Agent 请求执行以下操作：\n**${toolName}**`,
-        },
-        {
-          type: 'text',
-          content: '请确认是否允许此操作。该操作将在项目根目录下执行。',
-        },
-      ],
+      title: '🔐 权限确认',
+      elements,
       actions: actions as any[],
     };
 
-    // 发送卡片
-    await this.sendMessage(context.chatId, { card });
+    // 发送卡片作为回复，并更新上下文 ID
+    const newMessageId = await this.sendReply(context.chatId, context.messageId, { card });
+    this.updateSessionMessageContext(sessionId, context.chatId, newMessageId);
+  }
+
+  private updateSessionMessageContext(sessionId: string, chatId: string, messageId: string): void {
+    if (!messageId) return;
+    this.messageContext.set(sessionId, { chatId, messageId });
   }
 
   private async handleMessage(data: FeishuMessageData): Promise<void> {
@@ -234,12 +257,9 @@ export class FeishuAdapter extends BaseIMAdapter {
       // 获取或创建会话
       const session = await this.sessionManager.getOrCreateSession(imMessage.userId);
 
-      // 存储消息上下文（用于后续回复）
-      this.messageContext.set(session.id, {
-        chatId: message.chat_id,
-        messageId: message.message_id,
-      });
-      
+      // 存储初始消息上下文
+      this.updateSessionMessageContext(session.id, message.chat_id, message.message_id);
+
       // 存储 sessionContext
       this.sessionContext.set(session.id, { userId });
 
@@ -256,7 +276,12 @@ export class FeishuAdapter extends BaseIMAdapter {
       // 仅在需要时发送初始回复（比如队列排队信息）
       if (response.message) {
         const formattedMessage = this.formatMessage(response);
-        await this.sendReply(message.chat_id, message.message_id, formattedMessage);
+        const newMessageId = await this.sendReply(
+          message.chat_id,
+          message.message_id,
+          formattedMessage
+        );
+        this.updateSessionMessageContext(session.id, message.chat_id, newMessageId);
       }
     } catch (error) {
       logger.error(error, 'Error handling message');
@@ -330,10 +355,10 @@ export class FeishuAdapter extends BaseIMAdapter {
     chatId: string,
     message: IMMessageFormat,
     _options?: IMReplyOptions
-  ): Promise<void> {
+  ): Promise<string> {
     const content = this.buildFeishuContent(message);
 
-    await this.client.im.message.create({
+    const res = await this.client.im.message.create({
       params: {
         receive_id_type: 'chat_id',
       },
@@ -344,14 +369,16 @@ export class FeishuAdapter extends BaseIMAdapter {
       },
     });
 
-    logger.debug({ chatId, messageType: this.getMessageType(message) }, 'Message sent');
+    const newMessageId = res.data?.message_id || '';
+    logger.debug({ chatId, messageType: this.getMessageType(message), newMessageId }, 'Message sent');
+    return newMessageId;
   }
 
   async sendReply(
     chatId: string,
     messageId: string | undefined,
     message: IMMessageFormat
-  ): Promise<void> {
+  ): Promise<string> {
     // 飞书支持引用回复
     const content = this.buildFeishuContent(message);
 
@@ -373,14 +400,16 @@ export class FeishuAdapter extends BaseIMAdapter {
       data.reply_message_id = messageId;
     }
 
-    await this.client.im.message.create({
+    const res = await this.client.im.message.create({
       params: {
         receive_id_type: 'chat_id',
       },
       data,
     });
 
-    logger.debug({ chatId, hasReply: !!messageId }, 'Reply sent');
+    const newMessageId = res.data?.message_id || '';
+    logger.debug({ chatId, hasReply: !!messageId, newMessageId }, 'Reply sent');
+    return newMessageId;
   }
 
   async addReaction(_chatId: string, messageId: string, reaction: string): Promise<void> {
@@ -431,11 +460,14 @@ export class FeishuAdapter extends BaseIMAdapter {
       ],
     };
 
-    // 发送卡片回复
-    await this.sendReply(chatId, messageId, { card: completionCard });
+    // 发送卡片回复，并更新上下文
+    const newMessageId = await this.sendReply(chatId, messageId, { card: completionCard });
+    this.updateSessionMessageContext(session.id, chatId, newMessageId);
 
-    // 添加完成 reaction
-    await this.addReaction(chatId, messageId, 'OK').catch(() => {});
+    // 添加完成 reaction (给最后一条消息加)
+    if (newMessageId) {
+      await this.addReaction(chatId, newMessageId, 'OK').catch(() => {});
+    }
 
     logger.info({ sessionId: session.id, chatId }, 'Task completed and rich card sent');
   }

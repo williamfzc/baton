@@ -30,6 +30,7 @@ mock.module('../../src/acp/client', () => {
         return { success: true, message: `Echo: ${prompt}` };
       }
       async sendCommand(cmd: string) { return this.sendPrompt(cmd); }
+      async cancelCurrentTask() {}
     }
   };
 });
@@ -198,19 +199,155 @@ describe('E2E Permission Flow', () => {
 
     
 
-                expect(selectResponse.success).toBe(false);
+                    expect(selectResponse.success).toBe(false);
 
     
 
-                expect(selectResponse.message).toContain('not found or expired');
+                    expect(selectResponse.message).toContain('not found or expired');
 
     
 
-              });
+                  });
 
     
 
-            });
+                
+
+    
+
+                  it('should implicitly cancel pending permission when new prompt arrives', async () => {
+
+    
+
+                    let capturedResponses: string[] = [];
+
+    
+
+                    queueEngine = new TaskQueueEngine(async (s, r) => {
+
+    
+
+                      capturedResponses.push(r.message);
+
+    
+
+                    });
+
+    
+
+                    dispatcher = new CommandDispatcher(sessionManager, queueEngine);
+
+    
+
+                
+
+    
+
+                    // 1. Trigger first task with permission
+
+    
+
+                    await dispatcher.dispatch({
+
+    
+
+                      userId: 'preempt-user',
+
+    
+
+                      userName: 'PreemptTester',
+
+    
+
+                      text: 'trigger_permission',
+
+    
+
+                      timestamp: Date.now()
+
+    
+
+                    });
+
+    
+
+                
+
+    
+
+                    await new Promise(resolve => setTimeout(resolve, 50));
+
+    
+
+                    
+
+    
+
+                    // 2. Send a new prompt immediately (implicit cancellation)
+
+    
+
+                    await dispatcher.dispatch({
+
+    
+
+                      userId: 'preempt-user',
+
+    
+
+                      userName: 'PreemptTester',
+
+    
+
+                      text: 'new instruction',
+
+    
+
+                      timestamp: Date.now()
+
+    
+
+                    });
+
+    
+
+                
+
+    
+
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+    
+
+                
+
+    
+
+                    // The first task should have been cancelled or finished with fallback
+
+    
+
+                    // The second task should have finished
+
+    
+
+                    expect(capturedResponses.length).toBeGreaterThanOrEqual(1);
+
+    
+
+                    expect(capturedResponses.some(m => m.includes('new instruction'))).toBe(true);
+
+    
+
+                  });
+
+    
+
+                });
+
+    
+
+                
 
     
 

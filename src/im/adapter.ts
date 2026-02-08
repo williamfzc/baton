@@ -66,16 +66,18 @@ export interface IMAdapter {
    * @param chatId 聊天/频道 ID
    * @param message 消息内容
    * @param options 发送选项
+   * @returns 消息 ID
    */
-  sendMessage(_chatId: string, message: IMMessageFormat, options?: IMReplyOptions): Promise<void>;
+  sendMessage(_chatId: string, message: IMMessageFormat, options?: IMReplyOptions): Promise<string>;
 
   /**
    * 发送回复（引用特定消息）
    * @param chatId 聊天/频道 ID
    * @param messageId 要回复的消息 ID
    * @param message 消息内容
+   * @returns 消息 ID
    */
-  sendReply(_chatId: string, _messageId: string, message: IMMessageFormat): Promise<void>;
+  sendReply(_chatId: string, _messageId: string | undefined, message: IMMessageFormat): Promise<string>;
 
   /**
    * 更新消息（用于流式响应或编辑消息）
@@ -127,9 +129,9 @@ export abstract class BaseIMAdapter implements IMAdapter {
     _chatId: string,
     message: IMMessageFormat,
     options?: IMReplyOptions
-  ): Promise<void>;
+  ): Promise<string>;
 
-  abstract sendReply(_chatId: string, _messageId: string, message: IMMessageFormat): Promise<void>;
+  abstract sendReply(_chatId: string, _messageId: string | undefined, message: IMMessageFormat): Promise<string>;
 
   abstract onTaskComplete(session: Session, response: IMResponse): Promise<void>;
 
