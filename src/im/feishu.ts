@@ -334,14 +334,29 @@ export class FeishuAdapter extends BaseIMAdapter {
       // 发送到指令分发器
       const response = await this.dispatcher.dispatch(imMessage);
 
-      // 仅在需要时发送初始回复（比如队列排队信息）
+      // 发送初始回复卡片（所有回复都使用卡片格式）
       if (response.message) {
-        const formattedMessage = this.formatMessage(response);
-        const newMessageId = await this.sendReply(
-          message.chat_id,
-          message.message_id,
-          formattedMessage
-        );
+        // 获取仓库路径
+        const repoPath = session.repoName || session.projectPath || 'unknown';
+
+        // 构建初始回复卡片
+        const initialCard: UniversalCard = {
+          title: `💬 ${repoPath}`,
+          elements: [
+            {
+              type: 'markdown',
+              content: this.truncateMessage(response.message, 2000),
+            },
+            {
+              type: 'markdown',
+              content: `---\nSession ID: ${session.id}`,
+            },
+          ],
+        };
+
+        const newMessageId = await this.sendReply(message.chat_id, message.message_id, {
+          card: initialCard,
+        });
         this.updateSessionMessageContext(session.id, message.chat_id, newMessageId);
       }
     } catch (error) {
