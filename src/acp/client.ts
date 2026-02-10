@@ -462,10 +462,21 @@ export class ACPClient {
   async setMode(modeId: string): Promise<IMResponse> {
     if (!this.connection || !this.currentSessionId) throw new Error('Not connected');
 
-    await this.connection.setSessionMode({
-      sessionId: this.currentSessionId,
-      modeId,
-    });
+    // 检查连接是否支持 setSessionMode 方法
+    if (
+      'setSessionMode' in this.connection &&
+      typeof this.connection.setSessionMode === 'function'
+    ) {
+      await this.connection.setSessionMode({
+        sessionId: this.currentSessionId,
+        modeId,
+      });
+    } else {
+      return {
+        success: false,
+        message: '当前 Agent 不支持模式切换功能',
+      };
+    }
 
     return { success: true, message: `模式已切换为: ${modeId}` };
   }
@@ -488,16 +499,28 @@ export class ACPClient {
       const conn = this.connection as unknown as Record<string, unknown>;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (typeof conn.execute === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        await (conn.execute as (method: string, params: unknown) => Promise<unknown>)(
-          'session/setModel',
-          {
-            sessionId: this.currentSessionId,
-            modelId,
-          }
-        );
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          await (conn.execute as (method: string, params: unknown) => Promise<unknown>)(
+            'session/setModel',
+            {
+              sessionId: this.currentSessionId,
+              modelId,
+            }
+          );
+        } catch {
+          // 如果 execute 也失败，返回不支持的信息
+          return {
+            success: false,
+            message: '当前 Agent 不支持模型切换功能',
+          };
+        }
       } else {
-        throw new Error('setSessionModel not supported by connection');
+        // 连接不支持模型切换，返回友好提示
+        return {
+          success: false,
+          message: '当前 Agent 不支持模型切换功能',
+        };
       }
     }
 
