@@ -29,6 +29,11 @@ export interface Session {
       request: RequestPermissionRequest; // 存储原始请求以获取选项列表
     }
   >;
+  // 用于存储当前正在等待的用户输入类型
+  waitingFor?: {
+    type: 'repo_selection' | 'permission';
+    timestamp: number;
+  };
 }
 
 export interface Task {

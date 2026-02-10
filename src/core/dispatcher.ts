@@ -73,6 +73,22 @@ export class CommandDispatcher {
       }
     }
 
+    // 检查是否正在等待仓库选择
+    if (session.waitingFor?.type === 'repo_selection' && /^\d+$/.test(trimmed)) {
+      console.log(
+        `[Dispatcher] Numeric input detected during repo selection. Treating as repo switch.`
+      );
+      // 清除等待状态
+      delete session.waitingFor;
+      // 将数字作为 /repo 命令处理
+      const repoCommand: ParsedCommand = {
+        type: 'repo',
+        args: [trimmed],
+        raw: `/repo ${trimmed}`,
+      };
+      return this.handleRepo(message, repoCommand);
+    }
+
     console.log(
       `[Dispatcher] ${message.userId}: ${command.type} - ${command.raw.substring(0, 30)}`
     );
@@ -126,9 +142,17 @@ export class CommandDispatcher {
 
     if (!identifier) {
       const listText = repos.map(r => `  ${r.index}. ${r.name} (${r.path})`).join('\n');
+
+      // 设置等待仓库选择状态
+      const session = await this.sessionManager.getOrCreateSession(
+        message.userId,
+        message.contextId
+      );
+      session.waitingFor = { type: 'repo_selection', timestamp: Date.now() };
+
       return {
         success: true,
-        message: `📦 可用仓库:\n${listText}\n\n请输入序号或名称切换仓库`,
+        message: `📦 可用仓库:\n${listText}\n\n请输入序号切换仓库`,
         data: { repos: repos.map(r => ({ index: r.index, name: r.name, path: r.path })) },
       };
     }
@@ -151,6 +175,10 @@ export class CommandDispatcher {
 
     await this.sessionManager.resetAllSessions();
     this.sessionManager.setCurrentRepo(targetRepo);
+
+    // 清除等待状态
+    const session = await this.sessionManager.getOrCreateSession(message.userId, message.contextId);
+    delete session.waitingFor;
 
     return {
       success: true,
