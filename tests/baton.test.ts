@@ -17,7 +17,7 @@ class MockFeishuClient {
   private userName: string = 'Test User';
 
   constructor(projectPath: string) {
-    const sessionManager = new SessionManager(projectPath);
+    const sessionManager = new SessionManager();
     // 创建一个简单的 mock repoManager
     const mockRepoManager = {
       listRepos: () => [],
@@ -131,9 +131,10 @@ describe('Baton MVP Tests', () => {
 
   describe('Session Management', () => {
     it('should create session on first message', async () => {
-      const sessionManager = new SessionManager(testProjectPath);
+      const sessionManager = new SessionManager();
+      sessionManager.setCurrentRepo({ name: 'test', path: testProjectPath, gitPath: '' });
 
-      const initial = sessionManager.getSession('new-user');
+      const initial = sessionManager.getSession('new-user', undefined, testProjectPath);
       assert.strictEqual(initial, undefined);
 
       const response = await mockClient.sendMessage('Hello');

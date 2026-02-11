@@ -103,8 +103,7 @@ export class FeishuAdapter extends BaseIMAdapter {
     });
 
     // 创建会话管理器
-    const projectPath = selectedRepo?.path || config.project.path;
-    this.sessionManager = new SessionManager(projectPath, config.feishu.card?.permissionTimeout);
+    this.sessionManager = new SessionManager(config.feishu.card?.permissionTimeout);
 
     if (repoManager && selectedRepo) {
       this.sessionManager.setRepoManager(repoManager);
@@ -291,9 +290,12 @@ export class FeishuAdapter extends BaseIMAdapter {
       );
 
       // 获取或创建会话，传递 contextId 实现群聊隔离
+      const projectPath =
+        this.sessionManager.getCurrentRepo()?.path || this.config.project?.path || '';
       const session = await this.sessionManager.getOrCreateSession(
         imMessage.userId,
-        imMessage.contextId
+        imMessage.contextId,
+        projectPath
       );
 
       // 存储初始消息上下文

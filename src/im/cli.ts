@@ -32,7 +32,7 @@ export class CLIAdapter extends BaseIMAdapter {
     this.projectPath = projectPath;
 
     // 创建会话管理器
-    this.sessionManager = new SessionManager(projectPath);
+    this.sessionManager = new SessionManager();
 
     // 创建任务队列引擎
     this.queueEngine = new TaskQueueEngine(this.onTaskComplete.bind(this));

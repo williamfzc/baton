@@ -13,7 +13,9 @@ describe('E2E System Commands', () => {
 
   beforeEach(() => {
     capturedResponses = [];
-    sessionManager = new SessionManager(testProjectPath);
+    sessionManager = new SessionManager();
+    sessionManager.setCurrentRepo({ name: 'test', path: testProjectPath, gitPath: '' });
+
     queueEngine = new TaskQueueEngine(async (sess: Session, resp: IMResponse) => {
       capturedResponses.push(resp);
     });
@@ -100,7 +102,7 @@ describe('E2E System Commands', () => {
     expect(response.success).toBe(true);
     expect(response.card).toBeDefined();
 
-    const session = sessionManager.getSession('stop-all-user', 'stop-all-context');
+    const session = sessionManager.getSession('stop-all-user', 'stop-all-context', testProjectPath);
     expect(session?.queue.pending.length).toBe(0);
   });
 
@@ -115,7 +117,7 @@ describe('E2E System Commands', () => {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    const sessionBefore = sessionManager.getSession('reset-user', 'reset-context');
+    const sessionBefore = sessionManager.getSession('reset-user', 'reset-context', testProjectPath);
     expect(sessionBefore).toBeDefined();
 
     const response = await dispatcher.dispatch({
@@ -130,7 +132,7 @@ describe('E2E System Commands', () => {
     expect(response.card).toBeDefined();
     expect(response.card?.title).toContain('重置会话');
 
-    const sessionAfter = sessionManager.getSession('reset-user', 'reset-context');
+    const sessionAfter = sessionManager.getSession('reset-user', 'reset-context', testProjectPath);
     expect(sessionAfter).toBeUndefined();
   });
 
@@ -176,7 +178,7 @@ describe('E2E System Commands', () => {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    const session1 = sessionManager.getSession(userId, contextId);
+    const session1 = sessionManager.getSession(userId, contextId, testProjectPath);
     const session1Id = session1?.id;
 
     await dispatcher.dispatch({
@@ -187,7 +189,7 @@ describe('E2E System Commands', () => {
       contextId,
     } as IMMessage);
 
-    expect(sessionManager.getSession(userId, contextId)).toBeUndefined();
+    expect(sessionManager.getSession(userId, contextId, testProjectPath)).toBeUndefined();
 
     await dispatcher.dispatch({
       userId,
@@ -199,7 +201,7 @@ describe('E2E System Commands', () => {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    const session2 = sessionManager.getSession(userId, contextId);
+    const session2 = sessionManager.getSession(userId, contextId, testProjectPath);
     expect(session2).toBeDefined();
     expect(session2?.id).not.toBe(session1Id);
   });

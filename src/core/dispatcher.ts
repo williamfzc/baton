@@ -53,7 +53,13 @@ export class CommandDispatcher {
     const command = this.parseCommand(message.text);
 
     // 💡 统一处理：如果当前有待处理的交互（权限、选择等）
-    const session = await this.sessionManager.getOrCreateSession(message.userId, message.contextId);
+    const currentRepo = this.sessionManager.getCurrentRepo();
+    const projectPath = currentRepo?.path || '';
+    const session = await this.sessionManager.getOrCreateSession(
+      message.userId,
+      message.contextId,
+      projectPath
+    );
     if (session.pendingInteractions.size > 0) {
       // 如果输入是纯数字，则视为选择选项
       if (/^\d+$/.test(trimmed)) {
@@ -228,9 +234,11 @@ export class CommandDispatcher {
     const mode = command.args[0];
     if (mode) {
       // 直接切换
+      const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
       const session = await this.sessionManager.getOrCreateSession(
         message.userId,
-        message.contextId
+        message.contextId,
+        projectPath
       );
       if (session.acpClient) {
         const result = await session.acpClient.setMode(mode);
@@ -264,9 +272,11 @@ export class CommandDispatcher {
     const model = command.args[0];
     if (model) {
       // 直接切换
+      const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
       const session = await this.sessionManager.getOrCreateSession(
         message.userId,
-        message.contextId
+        message.contextId,
+        projectPath
       );
       if (session.acpClient) {
         const result = await session.acpClient.setModel(model);
@@ -353,7 +363,12 @@ export class CommandDispatcher {
 
   private async handlePrompt(message: IMMessage, command: ParsedCommand): Promise<IMResponse> {
     // 获取或创建会话
-    const session = await this.sessionManager.getOrCreateSession(message.userId, message.contextId);
+    const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
+    const session = await this.sessionManager.getOrCreateSession(
+      message.userId,
+      message.contextId,
+      projectPath
+    );
 
     // 💡 隐式取消逻辑：如果当前有待处理的权限请求，说明用户可能想改需求
     // 发送新指令会自动取消当前的权限请求和任务

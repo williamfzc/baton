@@ -28,14 +28,12 @@ function generateUUID(): string {
 const sessions = new Map<string, Session>();
 
 export class SessionManager extends EventEmitter {
-  private projectPath: string;
   private permissionTimeout: number;
   private repoManager: RepoManager | null = null;
   private currentRepoInfo: RepoInfo | null = null;
 
-  constructor(projectPath: string, permissionTimeoutSeconds: number = 300) {
+  constructor(permissionTimeoutSeconds: number = 300) {
     super();
-    this.projectPath = projectPath;
     this.permissionTimeout = permissionTimeoutSeconds * 1000;
   }
 
@@ -45,7 +43,6 @@ export class SessionManager extends EventEmitter {
 
   setCurrentRepo(repoInfo: RepoInfo): void {
     this.currentRepoInfo = repoInfo;
-    this.projectPath = repoInfo.path;
   }
 
   getCurrentRepo(): RepoInfo | null {
@@ -56,21 +53,29 @@ export class SessionManager extends EventEmitter {
     return this.repoManager;
   }
 
-  private buildSessionKey(userId: string, contextId?: string): string {
+  private buildSessionKey(
+    userId: string,
+    contextId: string | undefined,
+    projectPath: string
+  ): string {
     if (contextId) {
-      return `${userId}:${contextId}:${this.projectPath}`;
+      return `${userId}:${contextId}:${projectPath}`;
     }
-    return `${userId}:${this.projectPath}`;
+    return `${userId}:${projectPath}`;
   }
 
-  async getOrCreateSession(userId: string, contextId?: string): Promise<Session> {
-    const sessionKey = this.buildSessionKey(userId, contextId);
+  async getOrCreateSession(
+    userId: string,
+    contextId: string | undefined,
+    projectPath: string
+  ): Promise<Session> {
+    const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
 
     if (!sessions.has(sessionKey)) {
       const session: Session = {
         id: generateUUID(),
         userId,
-        projectPath: this.projectPath,
+        projectPath,
         repoName: this.currentRepoInfo?.name,
         acpClient: null,
         queue: {
@@ -83,7 +88,7 @@ export class SessionManager extends EventEmitter {
         pendingInteractions: new Map(),
       };
       sessions.set(sessionKey, session);
-      logger.info(`[Session] Created new session for user ${userId}`);
+      logger.info(`[Session] Created new session for user ${userId} in ${projectPath}`);
     }
 
     const session = sessions.get(sessionKey)!;
@@ -95,9 +100,8 @@ export class SessionManager extends EventEmitter {
       // 定义权限处理函数
       const permissionHandler = async (req: RequestPermissionRequest): Promise<string> => {
         return new Promise<string>((resolve, reject) => {
-          const requestId = generateUUID(); // 生成本次请求的唯一 ID
+          const requestId = generateUUID();
 
-          // 存入 pendingInteractions
           session.pendingInteractions.set(requestId, {
             type: 'permission',
             resolve,
@@ -127,7 +131,6 @@ export class SessionManager extends EventEmitter {
           setTimeout(() => {
             if (session.pendingInteractions.has(requestId)) {
               const pending = session.pendingInteractions.get(requestId);
-              // 默认拒绝：查找是否有 deny/cancel 选项，没有则选第一个
               const fallbackOption =
                 req.options.find(
                   (o: PermissionOption) =>
@@ -143,7 +146,7 @@ export class SessionManager extends EventEmitter {
         });
       };
 
-      const acpClient = new ACPClient(this.projectPath, permissionHandler);
+      const acpClient = new ACPClient(session.projectPath, permissionHandler);
       await acpClient.startAgent();
       session.acpClient = acpClient;
 
@@ -224,7 +227,8 @@ export class SessionManager extends EventEmitter {
     contextId: string | undefined,
     repos: { index: number; name: string; path: string }[]
   ): Promise<IMResponse> {
-    const session = await this.getOrCreateSession(userId, contextId);
+    const projectPath = this.currentRepoInfo?.path || '';
+    const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的交互
     if (session.pendingInteractions.size > 0) {
@@ -312,8 +316,12 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  getSession(userId: string, contextId?: string): Session | undefined {
-    const sessionKey = this.buildSessionKey(userId, contextId);
+  getSession(
+    userId: string,
+    contextId: string | undefined,
+    projectPath: string
+  ): Session | undefined {
+    const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
     return sessions.get(sessionKey);
   }
 
@@ -326,8 +334,9 @@ export class SessionManager extends EventEmitter {
     return undefined;
   }
 
-  async resetSession(userId: string, contextId?: string): Promise<IMResponse> {
-    const sessionKey = this.buildSessionKey(userId, contextId);
+  async resetSession(userId: string, contextId: string | undefined): Promise<IMResponse> {
+    const projectPath = this.currentRepoInfo?.path || '';
+    const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
     const session = sessions.get(sessionKey);
 
     if (!session) {
@@ -425,8 +434,9 @@ export class SessionManager extends EventEmitter {
     };
   }
 
-  getQueueStatus(userId: string, contextId?: string): IMResponse {
-    const session = this.getSession(userId, contextId);
+  getQueueStatus(userId: string, contextId: string | undefined): IMResponse {
+    const projectPath = this.currentRepoInfo?.path || '';
+    const session = this.getSession(userId, contextId, projectPath);
     if (!session) {
       return {
         success: true,
@@ -536,8 +546,13 @@ export class SessionManager extends EventEmitter {
     };
   }
 
-  async stopTask(userId: string, taskId?: string, contextId?: string): Promise<IMResponse> {
-    const session = this.getSession(userId, contextId);
+  async stopTask(
+    userId: string,
+    taskId: string | undefined,
+    contextId: string | undefined
+  ): Promise<IMResponse> {
+    const projectPath = this.currentRepoInfo?.path || '';
+    const session = this.getSession(userId, contextId, projectPath);
     if (!session) {
       return {
         success: false,
@@ -651,8 +666,9 @@ export class SessionManager extends EventEmitter {
   }
 
   // 触发模式选择
-  async triggerModeSelection(userId: string, contextId?: string): Promise<IMResponse> {
-    const session = await this.getOrCreateSession(userId, contextId);
+  async triggerModeSelection(userId: string, contextId: string | undefined): Promise<IMResponse> {
+    const projectPath = this.currentRepoInfo?.path || '';
+    const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的权限请求
     if (session.pendingInteractions.size > 0) {
@@ -738,8 +754,9 @@ export class SessionManager extends EventEmitter {
   }
 
   // 触发模型选择
-  async triggerModelSelection(userId: string, contextId?: string): Promise<IMResponse> {
-    const session = await this.getOrCreateSession(userId, contextId);
+  async triggerModelSelection(userId: string, contextId: string | undefined): Promise<IMResponse> {
+    const projectPath = this.currentRepoInfo?.path || '';
+    const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的权限请求
     if (session.pendingInteractions.size > 0) {

@@ -65,7 +65,7 @@ export async function main(workDir?: string) {
   }
 
   // 创建会话管理器
-  const sessionManager = new SessionManager(selectedRepo.path);
+  const sessionManager = new SessionManager();
   sessionManager.setRepoManager(repoManager);
   sessionManager.setCurrentRepo(selectedRepo);
 
