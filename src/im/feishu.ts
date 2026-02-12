@@ -335,7 +335,9 @@ export class FeishuAdapter extends BaseIMAdapter {
 
       // 获取或创建会话，传递 contextId 实现群聊隔离
       const projectPath =
-        this.sessionManager.getCurrentRepo()?.path || this.config.project?.path || '';
+        this.sessionManager.resolveProjectPath(imMessage.userId, imMessage.contextId) ||
+        this.config.project?.path ||
+        '';
       const session = await this.sessionManager.getOrCreateSession(
         imMessage.userId,
         imMessage.contextId,

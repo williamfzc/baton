@@ -142,10 +142,45 @@ export class TaskQueueEngine {
   }
 
   private buildPlanPrefix(planStatus: ACPPlanStatus): string {
-    const currentStep = planStatus.current?.content
-      ? `\n🧩 当前步骤: ${this.truncate(planStatus.current.content, 80)}`
-      : '';
-    return `📍 任务进度: ${planStatus.summary}${currentStep}`;
+    const formatStatusEmoji = (status: string): string => {
+      const normalized = status.toLowerCase();
+      if (normalized === 'completed' || normalized === 'done') return '✅';
+      if (
+        normalized === 'in_progress' ||
+        normalized === 'in-progress' ||
+        normalized === 'running' ||
+        normalized === 'active'
+      )
+        return '🚧';
+      if (
+        normalized === 'pending' ||
+        normalized === 'todo' ||
+        normalized === 'not_started' ||
+        normalized === 'not-started'
+      )
+        return '⏳';
+      return '❔';
+    };
+
+    const formatPriorityEmoji = (priority: string): string => {
+      const normalized = priority.toLowerCase();
+      if (normalized === 'high') return '🔥';
+      if (normalized === 'medium') return '⚖️';
+      if (normalized === 'low') return '🧊';
+      return '📌';
+    };
+
+    const list = planStatus.entries
+      .slice(0, 3)
+      .map(
+        (entry, index) =>
+          `${index + 1}. ${formatStatusEmoji(entry.status)}${formatPriorityEmoji(entry.priority)} ${this.truncate(entry.content, 70)}`
+      )
+      .join('\n');
+    const remains =
+      planStatus.entries.length > 3 ? `\n… 还有 ${planStatus.entries.length - 3} 项` : '';
+
+    return `📍 任务进度\n${planStatus.summary}\n${list || '暂无计划条目'}${remains}`;
   }
 
   private attachPlanProgressPrefix(session: Session, response: IMResponse): IMResponse {

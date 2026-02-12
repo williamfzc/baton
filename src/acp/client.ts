@@ -42,6 +42,7 @@ export interface ACPLaunchConfig {
 
 export interface ACPPlanEntry {
   status: string;
+  priority: string;
   content: string;
 }
 
@@ -107,8 +108,10 @@ class BatonClient implements Client {
         break;
 
       case 'plan': {
+        // ACP Agent Plan 规范要求每次更新都携带完整列表，客户端需整包替换
         this.latestPlanEntries = update.entries.map(entry => ({
           status: String(entry.status || 'pending'),
+          priority: String(entry.priority || 'medium'),
           content: String(entry.content || ''),
         }));
         this.latestPlanUpdatedAt = Date.now();

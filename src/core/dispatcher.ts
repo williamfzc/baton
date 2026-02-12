@@ -1,8 +1,7 @@
 /**
  * 指令分发器
- * 解析用户输入，区分系统指令和 Agent Prompt，路由到相应的处理逻辑
- * 作为 IM 层和核心逻辑层的桥梁，统一处理所有用户请求
- * 支持 /repo 命令切换不同仓库，每个仓库有独立的会话
+ * 负责控制平面（/repo /stop /reset 等）与数据平面（prompt 入队）的路由
+ * 在 WAITING_CONFIRM 状态下优先处理确认消息，其余普通消息仅入队不抢占执行
  */
 import type { IMMessage, IMResponse, ParsedCommand } from '../types';
 import type { UniversalCard } from '../im/types';
@@ -52,32 +51,23 @@ export class CommandDispatcher {
     const trimmed = message.text.trim();
     const command = this.parseCommand(message.text);
 
-    // 💡 统一处理：如果当前有待处理的交互（权限、选择等）
-    const currentRepo = this.sessionManager.getCurrentRepo();
-    const projectPath = currentRepo?.path || '';
+    const projectPath = this.sessionManager.resolveProjectPath(message.userId, message.contextId);
     const session = await this.sessionManager.getOrCreateSession(
       message.userId,
       message.contextId,
       projectPath
     );
+
     if (session.pendingInteractions.size > 0) {
-      // 如果输入是纯数字，则视为选择选项
-      if (/^\d+$/.test(trimmed)) {
-        // 取第一个挂起的请求
-        const requestId = Array.from(session.pendingInteractions.keys())[0];
-        const interaction = session.pendingInteractions.get(requestId);
-        console.log(
-          `[Dispatcher] Numeric input detected during pending ${interaction?.type}. Treating as selection.`
-        );
+      const requestId = Array.from(session.pendingInteractions.keys())[0];
+      const interaction = session.pendingInteractions.get(requestId);
+      const isInteractionReply =
+        command.type === 'prompt' &&
+        !!interaction &&
+        this.matchesInteractionReply(trimmed, interaction.data.options);
+
+      if (isInteractionReply) {
         return await this.sessionManager.resolveInteraction(session.id, requestId, trimmed);
-      } else if (command.type === 'mode' || command.type === 'model') {
-        // 如果是 mode 或 model 命令，提醒用户先处理当前交互
-        console.log(`[Dispatcher] Mode/Model command detected during pending interaction.`);
-        return {
-          success: false,
-          message:
-            '当前有待处理的选择，请先完成选择后再试。\n请使用数字序号回复或点击 IM 卡片进行选择。',
-        };
       }
     }
 
@@ -156,7 +146,7 @@ export class CommandDispatcher {
       };
     }
 
-    const currentRepo = this.sessionManager.getCurrentRepo();
+    const currentRepo = this.sessionManager.getConversationRepo(message.userId, message.contextId);
     if (currentRepo && currentRepo.path === targetRepo.path) {
       return {
         success: true,
@@ -177,8 +167,7 @@ export class CommandDispatcher {
       };
     }
 
-    await this.sessionManager.resetAllSessions();
-    this.sessionManager.setCurrentRepo(targetRepo);
+    this.sessionManager.switchConversationRepo(message.userId, message.contextId, targetRepo);
 
     return {
       success: true,
@@ -234,7 +223,7 @@ export class CommandDispatcher {
     const mode = command.args[0];
     if (mode) {
       // 直接切换
-      const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
+      const projectPath = this.sessionManager.resolveProjectPath(message.userId, message.contextId);
       const session = await this.sessionManager.getOrCreateSession(
         message.userId,
         message.contextId,
@@ -272,7 +261,7 @@ export class CommandDispatcher {
     const model = command.args[0];
     if (model) {
       // 直接切换
-      const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
+      const projectPath = this.sessionManager.resolveProjectPath(message.userId, message.contextId);
       const session = await this.sessionManager.getOrCreateSession(
         message.userId,
         message.contextId,
@@ -363,29 +352,31 @@ export class CommandDispatcher {
 
   private async handlePrompt(message: IMMessage, command: ParsedCommand): Promise<IMResponse> {
     // 获取或创建会话
-    const projectPath = this.sessionManager.getCurrentRepo()?.path || '';
+    const projectPath = this.sessionManager.resolveProjectPath(message.userId, message.contextId);
     const session = await this.sessionManager.getOrCreateSession(
       message.userId,
       message.contextId,
       projectPath
     );
 
-    // 💡 隐式取消逻辑：如果当前有待处理的权限请求，说明用户可能想改需求
-    // 发送新指令会自动取消当前的权限请求和任务
-    if (session.pendingInteractions.size > 0) {
-      console.log(
-        `[Dispatcher] User sent new instruction while permission pending. Cancelling current task...`
-      );
-      await this.sessionManager.stopTask(message.userId, undefined, message.contextId);
-      // 显式清理挂起的请求
-      for (const [requestId] of session.pendingInteractions) {
-        await this.sessionManager.resolveInteraction(session.id, requestId, 'cancel');
-      }
-    }
-
     // 加入任务队列
     const result = await this.queueEngine.enqueue(session, command.raw, 'prompt');
 
     return result;
+  }
+
+  private matchesInteractionReply(
+    input: string,
+    options: Array<{ optionId: string; name: string }>
+  ): boolean {
+    const normalized = input.trim().toLowerCase();
+    if (!normalized) return false;
+    if (/^\d+$/.test(normalized)) return true;
+    if (['allow', 'deny', 'cancel', 'yes', 'no', 'y', 'n'].includes(normalized)) return true;
+
+    return options.some(
+      opt =>
+        opt.optionId.toLowerCase() === normalized || opt.name.trim().toLowerCase() === normalized
+    );
   }
 }

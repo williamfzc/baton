@@ -4,6 +4,7 @@
  * 提供基于 readline 的交互式界面
  */
 import readline from 'node:readline/promises';
+import * as path from 'node:path';
 import type { IMMessage, IMResponse, Session } from '../types';
 import { CommandDispatcher } from '../core/dispatcher';
 import { SessionManager } from '../core/session';
@@ -33,6 +34,11 @@ export class CLIAdapter extends BaseIMAdapter {
 
     // 创建会话管理器
     this.sessionManager = new SessionManager();
+    this.sessionManager.setCurrentRepo({
+      name: path.basename(this.projectPath),
+      path: this.projectPath,
+      gitPath: path.join(this.projectPath, '.git'),
+    });
 
     // 创建任务队列引擎
     this.queueEngine = new TaskQueueEngine(this.onTaskComplete.bind(this));

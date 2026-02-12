@@ -612,12 +612,44 @@ export class SessionManager extends EventEmitter {
     ];
 
     if (planStatus && planStatus.entries.length > 0) {
+      const formatStatusEmoji = (status: string): string => {
+        const normalized = status.toLowerCase();
+        if (normalized === 'completed' || normalized === 'done') return '✅';
+        if (
+          normalized === 'in_progress' ||
+          normalized === 'in-progress' ||
+          normalized === 'running' ||
+          normalized === 'active'
+        )
+          return '🚧';
+        if (
+          normalized === 'pending' ||
+          normalized === 'todo' ||
+          normalized === 'not_started' ||
+          normalized === 'not-started'
+        )
+          return '⏳';
+        return '❔';
+      };
+      const formatPriorityEmoji = (priority: string): string => {
+        const normalized = priority.toLowerCase();
+        if (normalized === 'high') return '🔥';
+        if (normalized === 'medium') return '⚖️';
+        if (normalized === 'low') return '🧊';
+        return '📌';
+      };
+      const planList = planStatus.entries
+        .map(
+          (entry, idx) =>
+            `${idx + 1}. ${formatStatusEmoji(entry.status)}${formatPriorityEmoji(entry.priority)} ${entry.content.substring(0, 90)}${entry.content.length > 90 ? '...' : ''}`
+        )
+        .join('\n');
       const currentStep = planStatus.current?.content
         ? `\n**🧩 当前步骤：** ${planStatus.current.content.substring(0, 100)}${planStatus.current.content.length > 100 ? '...' : ''}`
         : '';
       elements.push({
         type: 'markdown' as const,
-        content: `**🗺️ Agent 计划：** ${planStatus.summary}${currentStep}`,
+        content: `**🗺️ Agent 计划：** ${planStatus.summary}\n${planList}${currentStep}`,
       });
     } else {
       elements.push({
@@ -667,6 +699,13 @@ export class SessionManager extends EventEmitter {
     messageText += `🧭 会话状态: ${session.state} | ⏳ 待确认交互: ${waitingCount}\n`;
     if (planStatus && planStatus.entries.length > 0) {
       messageText += `🗺️ Agent 计划: ${planStatus.summary}\n`;
+      const textList = planStatus.entries
+        .slice(0, 5)
+        .map((entry, idx) => `${idx + 1}. [${entry.status}/${entry.priority}] ${entry.content}`)
+        .join('\n');
+      if (textList) {
+        messageText += `${textList}\n`;
+      }
       if (planStatus.current?.content) {
         messageText += `🧩 当前步骤: ${planStatus.current.content.substring(0, 50)}${planStatus.current.content.length > 50 ? '...' : ''}\n`;
       }

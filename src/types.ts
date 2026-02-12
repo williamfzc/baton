@@ -8,14 +8,18 @@ import type { ACPClient } from './acp/client';
 import type { RequestPermissionRequest, SessionMode, ModelInfo } from '@agentclientprotocol/sdk';
 import type { UniversalCard } from './im/types';
 
+export type SessionState = 'IDLE' | 'RUNNING' | 'WAITING_CONFIRM' | 'STOPPED';
+
 export interface Session {
   id: string;
   userId: string;
+  contextId?: string;
   projectPath: string;
   repoName?: string;
   acpClient: ACPClient | null;
   queue: TaskQueue;
   isProcessing: boolean;
+  state: SessionState;
   availableModes: SessionMode[];
   currentModeId?: string;
   availableModels: ModelInfo[];

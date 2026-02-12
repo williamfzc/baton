@@ -202,13 +202,13 @@ describe('TaskQueueEngine', () => {
         sendCommand: async () => ({ success: true, message: '' }),
         getPlanStatus: () => ({
           entries: [
-            { status: 'completed', content: '收集上下文' },
-            { status: 'in_progress', content: '实现并验证改动' },
+            { status: 'completed', priority: 'high', content: '收集上下文' },
+            { status: 'in_progress', priority: 'high', content: '实现并验证改动' },
           ],
           updatedAt: Date.now(),
           summary: '总计 2 步，完成 1，进行中 1，待处理 0',
           counts: { total: 2, completed: 1, inProgress: 1, pending: 0, other: 0 },
-          current: { status: 'in_progress', content: '实现并验证改动' },
+          current: { status: 'in_progress', priority: 'high', content: '实现并验证改动' },
         }),
         startAgent: async () => {},
         stop: async () => {},
@@ -223,8 +223,10 @@ describe('TaskQueueEngine', () => {
       await new Promise(resolve => setTimeout(resolve, 20));
 
       expect(capturedResponses.length).toBe(1);
-      expect(capturedResponses[0].message).toContain('📍 任务进度: 总计 2 步，完成 1，进行中 1，待处理 0');
-      expect(capturedResponses[0].message).toContain('🧩 当前步骤: 实现并验证改动');
+      expect(capturedResponses[0].message).toContain('📍 任务进度');
+      expect(capturedResponses[0].message).toContain('总计 2 步，完成 1，进行中 1，待处理 0');
+      expect(capturedResponses[0].message).toContain('1. ✅🔥 收集上下文');
+      expect(capturedResponses[0].message).toContain('2. 🚧🔥 实现并验证改动');
       expect(capturedResponses[0].message).toContain('最终回答内容');
     });
   });
