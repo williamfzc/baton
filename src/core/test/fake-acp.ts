@@ -1,7 +1,12 @@
 /**
  * FakeACPClient - 内存中的 ACP 协议模拟器
  */
-import type { SessionMode, ModelInfo, RequestPermissionRequest, PermissionOption } from '@agentclientprotocol/sdk';
+import type {
+  SessionMode,
+  ModelInfo,
+  RequestPermissionRequest,
+  PermissionOption,
+} from '@agentclientprotocol/sdk';
 import type { IMResponse } from '../../types';
 
 export type PermissionHandler = (params: RequestPermissionRequest) => Promise<string>;
@@ -102,7 +107,7 @@ export class FakeACPClient {
         name: o.name,
         kind: 'allow_once',
       }));
-      
+
       const result = await this.permissionHandler({
         sessionId: 'fake-session',
         toolCall: { title: this.promptConfig.triggerPermission.title, toolCallId: 'fake' },
@@ -110,7 +115,10 @@ export class FakeACPClient {
       });
 
       if (result.toLowerCase().includes('deny')) {
-        return { success: false, message: `权限被拒绝: ${this.promptConfig.triggerPermission.title}` };
+        return {
+          success: false,
+          message: `权限被拒绝: ${this.promptConfig.triggerPermission.title}`,
+        };
       }
     }
 
@@ -165,7 +173,9 @@ export class FakeACPClientFactory {
     _defaultOption: string = 'deny'
   ): { client: FakeACPClient; resolvePermission: (option: string) => void } {
     let resolvePermission!: (option: string) => void;
-    const permissionPromise = new Promise<string>(resolve => { resolvePermission = resolve; });
+    const permissionPromise = new Promise<string>(resolve => {
+      resolvePermission = resolve;
+    });
 
     const client = new FakeACPClient(() => permissionPromise);
     client.setPromptConfig({ ...DEFAULT_CONFIG, triggerPermission: { title, options } });

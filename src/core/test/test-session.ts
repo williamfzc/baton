@@ -49,9 +49,9 @@ export class DefaultACPClientFactory implements FakeACPClientFactory {
  */
 export class TestSessionManager extends EventEmitter {
   private sessions: Map<string, Session> = new Map();
-  private repoManager: { 
-    findRepo(id: string): { name: string; path: string; gitPath: string } | null; 
-    listRepos(): { name: string; path: string; gitPath: string }[] 
+  private repoManager: {
+    findRepo(id: string): { name: string; path: string; gitPath: string } | null;
+    listRepos(): { name: string; path: string; gitPath: string }[];
   } | null = null;
   private currentRepoInfo: RepoInfo | null = null;
   private acpClientFactory: FakeACPClientFactory;
@@ -123,7 +123,7 @@ export class TestSessionManager extends EventEmitter {
 
       // 定义权限处理函数
       const permissionHandler = async (req: RequestPermissionRequest): Promise<string> => {
-        return new Promise<string>((resolve) => {
+        return new Promise<string>(resolve => {
           const requestId = generateUUID();
 
           session.pendingInteractions.set(requestId, {
@@ -150,9 +150,8 @@ export class TestSessionManager extends EventEmitter {
           setTimeout(() => {
             if (session.pendingInteractions.has(requestId)) {
               const pending = session.pendingInteractions.get(requestId);
-              const fallbackOption = req.options.find(
-                o => o.name.toLowerCase().includes('deny')
-              )?.optionId || 'deny';
+              const fallbackOption =
+                req.options.find(o => o.name.toLowerCase().includes('deny'))?.optionId || 'deny';
               pending?.resolve(fallbackOption);
               session.pendingInteractions.delete(requestId);
             }
@@ -341,8 +340,14 @@ export class TestSessionManager extends EventEmitter {
         title: `📊 会话状态 - ${repoName}`,
         elements: [
           { type: 'markdown', content: `**📁 项目：** \`${repoName}\`` },
-          { type: 'markdown', content: `**📋 当前任务：** ${session.isProcessing ? '运行中' : '🕐 空闲'}` },
-          { type: 'markdown', content: `**📬 待执行队列：** ${session.queue.pending.length} 个任务` },
+          {
+            type: 'markdown',
+            content: `**📋 当前任务：** ${session.isProcessing ? '运行中' : '🕐 空闲'}`,
+          },
+          {
+            type: 'markdown',
+            content: `**📬 待执行队列：** ${session.queue.pending.length} 个任务`,
+          },
         ],
       },
     };

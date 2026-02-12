@@ -63,16 +63,16 @@ export class LocalCLIMode {
 
   async start(): Promise<void> {
     await this.client.startAgent();
-    
+
     console.clear();
     console.log(COMMANDS);
     console.log('🚀 FakeACP 测试模式已启动\n');
 
     this.rl.prompt();
 
-    this.rl.on('line', async (line) => {
+    this.rl.on('line', async line => {
       const trimmed = line.trim();
-      
+
       if (!trimmed) {
         this.rl.prompt();
         return;
@@ -105,7 +105,7 @@ export class LocalCLIMode {
 
     // 发送消息
     console.log(`\n📤 发送: "${trimmed}"\n`);
-    
+
     const response = await this.client.sendPrompt(trimmed);
     this.printResponse(response);
   }
@@ -141,13 +141,15 @@ export class LocalCLIMode {
         const enable = args[0] !== 'off';
         this.fakeState.triggerPermission = enable;
         this.client.setPromptConfig({
-          triggerPermission: enable ? {
-            title: '测试权限请求',
-            options: [
-              { optionId: 'allow', name: '允许', kind: 'allow_once' },
-              { optionId: 'deny', name: '拒绝', kind: 'allow_once' },
-            ],
-          } : undefined,
+          triggerPermission: enable
+            ? {
+                title: '测试权限请求',
+                options: [
+                  { optionId: 'allow', name: '允许', kind: 'allow_once' },
+                  { optionId: 'deny', name: '拒绝', kind: 'allow_once' },
+                ],
+              }
+            : undefined,
         });
         console.log(`✅ 权限请求: ${enable ? '启用' : '禁用'}`);
         break;

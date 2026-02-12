@@ -217,7 +217,10 @@ export class FeishuAdapter extends BaseIMAdapter {
       // 卡片发送失败，发送文本消息作为备选
       const optionsList = options as Array<{ name: string }>;
       const fallbackText = `**${String(toolName)}**\n\n请回复数字选择操作：\n\n${optionsList.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n')}\n\n或者直接回复选项名称`;
-      logger.warn({ sessionId, toolName: String(toolName) }, 'Card sending failed, sending fallback text');
+      logger.warn(
+        { sessionId, toolName: String(toolName) },
+        'Card sending failed, sending fallback text'
+      );
       await this.sendReply(context.chatId, context.messageId, {
         text: fallbackText,
       });
