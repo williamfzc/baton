@@ -31,7 +31,7 @@ export class CommandDispatcher {
     if (trimmed.startsWith('/stop')) {
       return { type: 'stop', args: trimmed.split(' ').slice(1), raw: trimmed };
     }
-    if (trimmed.startsWith('/reset')) {
+    if (/^\/(?:reset|new)(?:\s|$)/.test(trimmed)) {
       return { type: 'reset', args: [], raw: trimmed };
     }
     if (trimmed.startsWith('/model')) {
@@ -320,7 +320,7 @@ export class CommandDispatcher {
 • \`/repo [序号/名称]\` - 查看或切换仓库
 • \`/current\` - 查看当前会话状态
 • \`/stop [id/all]\` - 停止当前任务或清空队列
-• \`/reset\` - 重置会话（清除上下文）
+• \`/reset\` / \`/new\` - 重置会话（清除上下文）
 • \`/mode [name]\` - 查看或切换 Agent 模式
 • \`/model [name]\` - 查看或切换 AI 模型
 • \`/help\` - 显示此帮助

@@ -546,6 +546,10 @@ export class SessionManager extends EventEmitter {
       },
       {
         type: 'markdown' as const,
+        content: `**⚙️ Executor：** \`${this.executor}\``,
+      },
+      {
+        type: 'markdown' as const,
         content: `**🤖 Agent：** ${statusIcon} ${statusText}${pid ? ` | PID: \`${pid}\`` : ''}`,
       },
     ];
@@ -585,6 +589,7 @@ export class SessionManager extends EventEmitter {
     // 构建文本消息（兼容非卡片客户端）
     let messageText = `📁 项目: ${repoName}\n`;
     messageText += `📂 路径: ${session.projectPath}\n`;
+    messageText += `⚙️ Executor: ${this.executor}\n`;
     messageText += `🤖 Agent: ${statusText}${pid ? ` (PID: ${pid})` : ''}\n`;
     if (session.queue.current) {
       messageText += `📋 当前任务: ${session.queue.current.content.substring(0, 50)}...\n`;
@@ -599,6 +604,7 @@ export class SessionManager extends EventEmitter {
       data: {
         repoName,
         projectPath: session.projectPath,
+        executor: this.executor,
         agentStatus: { pid, running },
         current: session.queue.current,
         pending: session.queue.pending,

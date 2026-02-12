@@ -70,6 +70,11 @@ describe('Baton MVP Tests', () => {
       assert.strictEqual(response.success, true);
     });
 
+    it('should parse /new command as reset alias', async () => {
+      const response = await mockClient.sendMessage('/new');
+      assert.strictEqual(response.success, true);
+    });
+
     it('should parse /stop command', async () => {
       // 先发送一个 prompt 确保 session 存在
       await mockClient.sendMessage('Running task...');
