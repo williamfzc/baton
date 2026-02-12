@@ -138,7 +138,8 @@ export class RepoManager {
 
     if (fullPath.startsWith(this.rootPath)) {
       const relative = fullPath.slice(this.rootPath.length + 1);
-      return relative || '.';
+      // 如果相对路径为空（即当前路径就是 rootPath），返回目录名而不是点号
+      return relative || path.basename(this.rootPath);
     }
 
     return fullPath;
