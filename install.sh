@@ -3,7 +3,7 @@
 set -e
 
 REPO="williamfzc/baton"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 BINARY_NAME="baton"
 
 # 检测操作系统和架构
@@ -59,13 +59,13 @@ tar -xzf /tmp/baton.tar.gz -C /tmp
 chmod +x /tmp/baton
 
 echo "正在安装..."
-# 检查是否有权限写入 INSTALL_DIR
-if [ -w "$INSTALL_DIR" ]; then
-  mv /tmp/baton "$INSTALL_DIR/$BINARY_NAME"
-else
-  echo "需要管理员权限来安装到 $INSTALL_DIR"
-  sudo mv /tmp/baton "$INSTALL_DIR/$BINARY_NAME"
-fi
+mkdir -p "$INSTALL_DIR"
+mv /tmp/baton "$INSTALL_DIR/$BINARY_NAME"
 
 echo "✓ baton 安装成功！"
+if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
+  echo "⚠️  当前 PATH 未包含 $INSTALL_DIR"
+  echo "请将以下内容加入 shell 配置（如 ~/.zshrc 或 ~/.bashrc）："
+  echo "export PATH=\"$INSTALL_DIR:\$PATH\""
+fi
 echo "运行 'baton --help' 开始使用"

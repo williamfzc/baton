@@ -13,6 +13,13 @@
 curl -fsSL https://raw.githubusercontent.com/williamfzc/baton/main/install.sh | bash
 ```
 
+安装脚本默认安装到用户目录：
+
+- `XDG_BIN_HOME`（若已设置）
+- 否则 `~/.local/bin`
+
+无需 `sudo`。
+
 ### 手动安装
 
 从 [Releases](https://github.com/williamfzc/baton/releases) 下载对应平台的二进制文件：
@@ -23,7 +30,14 @@ curl -fsSL https://raw.githubusercontent.com/williamfzc/baton/main/install.sh | 
 
 ```bash
 chmod +x baton-*
-sudo mv baton-* /usr/local/bin/baton
+mkdir -p ~/.local/bin
+mv baton-* ~/.local/bin/baton
+```
+
+如果 `~/.local/bin` 不在 PATH 中，加入你的 shell 配置文件（如 `~/.zshrc`）：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### 从源码运行
