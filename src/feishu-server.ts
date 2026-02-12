@@ -30,7 +30,7 @@ export async function main(configPath?: string, workDir?: string) {
     }
 
     // 优先使用命令行参数指定的工作目录，其次使用配置文件中的路径
-    const rootPath = workDir || config.project?.path || process.cwd();
+    const rootPath = path.resolve(workDir || config.project?.path || process.cwd());
 
     logger.info(`📂 扫描目录: ${rootPath}`);
 

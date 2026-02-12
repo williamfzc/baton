@@ -14,6 +14,7 @@ import type { RequestPermissionRequest, PermissionOption } from '@agentclientpro
 import { RepoManager } from './repo';
 
 const logger = createLogger('SessionManager');
+const REPO_OPTION_PREFIX = 'repo:';
 
 // 简单的 UUID 生成函数
 function generateUUID(): string {
@@ -229,11 +230,14 @@ export class SessionManager extends EventEmitter {
       }
     }
 
-    // 对于 repo_selection 类型，直接处理并返回切换成功卡片
+    // 对于 repo_selection 类型，通过 Promise 回调返回结果，这里只负责触发回调
     if (pending.type === 'repo_selection') {
       const repoManager = this.getRepoManager();
       if (repoManager) {
-        const targetRepo = repoManager.findRepo(finalOptionId);
+        const repoIdentifier = finalOptionId.startsWith(REPO_OPTION_PREFIX)
+          ? finalOptionId.slice(REPO_OPTION_PREFIX.length)
+          : finalOptionId;
+        const targetRepo = repoManager.findRepo(repoIdentifier);
         if (targetRepo) {
           await this.resetAllSessions();
           this.setCurrentRepo(targetRepo);
@@ -243,6 +247,7 @@ export class SessionManager extends EventEmitter {
             { sessionId, requestId, finalOptionId, repoName: targetRepo.name },
             'Repository switched'
           );
+          // 返回切换成功卡片（Promise 返回空响应）
           return {
             success: true,
             message: `🔄 已切换到仓库: ${targetRepo.name}`,
@@ -293,6 +298,12 @@ export class SessionManager extends EventEmitter {
     contextId: string | undefined,
     repos: { index: number; name: string; path: string }[]
   ): Promise<IMResponse> {
+    // DEBUG: 打印 repos 内容
+    console.log(
+      '[DEBUG] createRepoSelection repos:',
+      repos.map(r => ({ index: r.index, name: r.name, path: r.path }))
+    );
+
     const projectPath = this.currentRepoInfo?.path || '';
     const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
@@ -345,48 +356,12 @@ export class SessionManager extends EventEmitter {
       const requestId = generateUUID();
       session.pendingInteractions.set(requestId, {
         type: 'repo_selection',
-        resolve: async optionId => {
-          const repoManager = this.getRepoManager();
-          if (repoManager) {
-            const targetRepo = repoManager.findRepo(optionId);
-            if (targetRepo) {
-              await this.resetAllSessions();
-              this.setCurrentRepo(targetRepo);
-              resolve({
-                success: true,
-                message: `🔄 已切换到仓库: ${targetRepo.name}`,
-                card: {
-                  title: '📦 仓库切换成功',
-                  elements: [
-                    {
-                      type: 'markdown',
-                      content: `✅ 已切换到仓库：**${targetRepo.name}**`,
-                    },
-                    {
-                      type: 'markdown',
-                      content: `📂 路径: \`${targetRepo.path}\``,
-                    },
-                    {
-                      type: 'markdown',
-                      content: '💡 新的会话将在下次发送消息时自动创建',
-                    },
-                  ],
-                },
-              });
-            } else {
-              resolve({
-                success: false,
-                message: `未找到仓库: ${optionId}`,
-                card: this.createStatusCard('仓库切换', `未找到仓库: ${optionId}`, false),
-              });
-            }
-          } else {
-            resolve({
-              success: false,
-              message: '仓库管理器未初始化',
-              card: this.createStatusCard('仓库切换', '仓库管理器未初始化', false),
-            });
-          }
+        resolve: async _optionId => {
+          // Promise 回调只返回空响应，实际逻辑已在 resolveInteraction 中完成
+          resolve({
+            success: true,
+            message: '',
+          });
         },
         reject: () =>
           resolve({
@@ -397,7 +372,7 @@ export class SessionManager extends EventEmitter {
         timestamp: Date.now(),
         data: {
           title: '选择仓库',
-          options: repos.map(r => ({ optionId: String(r.index), name: r.name })),
+          options: repos.map(r => ({ optionId: `${REPO_OPTION_PREFIX}${r.index}`, name: r.name })),
         },
       });
 

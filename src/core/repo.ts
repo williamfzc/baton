@@ -36,7 +36,8 @@ export class RepoManager {
 
   async scanFromRoot(root: string): Promise<RepoInfo[]> {
     this.repos = [];
-    this.rootPath = root;
+    // 规范化路径，去除 .. 和 .
+    this.rootPath = path.resolve(root);
 
     // 首先检查根目录本身是否是 git 仓库
     const rootGitPath = path.join(root, '.git');

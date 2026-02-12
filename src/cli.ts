@@ -22,7 +22,7 @@ interface PermissionRequestEvent {
 
 // 模拟 IM 消息循环
 export async function main(workDir?: string) {
-  const rootPath = workDir || process.cwd();
+  const rootPath = path.resolve(workDir || process.cwd());
 
   console.log('╔════════════════════════════════════════╗');
   console.log('║           Baton CLI v0.1.0             ║');
