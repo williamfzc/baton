@@ -16,7 +16,7 @@
     "dev:feishu": "bun --watch src/feishu-server.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
-    "test:unit": "bun test tests/baton.test.ts tests/core/*.test.ts",
+    "test:unit": "bun test tests/core/*.test.ts tests/new-architecture.test.ts",
     "test:e2e": "bun test tests/e2e/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "bun build --compile src/index.ts --outfile baton",

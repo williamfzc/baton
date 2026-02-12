@@ -1,16 +1,16 @@
 /**
- * Baton 单元测试
- * 使用 Node.js 内置测试框架测试核心功能
- * 包括指令解析、任务队列、会话管理等
+ * Baton 集成测试
+ * 使用真实的 SessionManager 测试完整流程
+ * 注意：这些测试需要 opencode CLI 已安装
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { CommandDispatcher } from '../src/core/dispatcher';
-import { SessionManager } from '../src/core/session';
-import { TaskQueueEngine } from '../src/core/queue';
-import type { IMMessage } from '../src/types';
+import { CommandDispatcher } from '../../src/core/dispatcher';
+import { SessionManager } from '../../src/core/session';
+import { TaskQueueEngine } from '../../src/core/queue';
+import type { IMMessage } from '../../src/types';
 
-// Mock Feishu Client - 直接在单测中模拟 IM 消息
+// Mock Feishu Client - 直接在测试中模拟 IM 消息
 class MockFeishuClient {
   private dispatcher: CommandDispatcher;
   private userId: string = 'test-user-001';
@@ -27,7 +27,7 @@ class MockFeishuClient {
       getRootPath: () => projectPath,
     };
     sessionManager.setRepoManager(
-      mockRepoManager as unknown as import('../src/core/repo').RepoManager
+      mockRepoManager as unknown as import('../../src/core/repo').RepoManager
     );
     const queueEngine = new TaskQueueEngine();
     this.dispatcher = new CommandDispatcher(sessionManager, queueEngine);
@@ -80,8 +80,6 @@ describe('Baton MVP Tests', () => {
     it('should parse /repo command', async () => {
       const response = await mockClient.sendMessage('/repo');
       assert.strictEqual(response.success, true);
-      // 现在 /repo 命令在没有仓库时返回 "未发现任何 Git 仓库"
-      // 或者在有仓库时返回仓库列表
       assert.ok(
         response.message.includes('未发现任何 Git 仓库') ||
           response.message.includes('📦 可用仓库') ||

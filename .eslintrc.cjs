@@ -23,23 +23,23 @@ module.exports = {
     '@typescript-eslint/explicit-function-return-type': 'off',
     '@typescript-eslint/no-explicit-any': 'warn',
     'no-console': 'off',
-    
+
     // 严格类型检查（MVP 阶段保持）
     '@typescript-eslint/no-unsafe-assignment': 'error',
     '@typescript-eslint/no-unsafe-member-access': 'error',
     '@typescript-eslint/no-unsafe-call': 'error',
     '@typescript-eslint/no-unsafe-return': 'error',
     '@typescript-eslint/no-unsafe-argument': 'error',
-    
+
     // 异步相关（允许灵活的异步模式）
     '@typescript-eslint/require-await': 'off',
     '@typescript-eslint/no-misused-promises': 'off',
     '@typescript-eslint/no-floating-promises': 'off',
-    
+
     // 其他
     'no-case-declarations': 'off',
     'no-constant-condition': 'off',
     '@typescript-eslint/restrict-template-expressions': 'off',
   },
-  ignorePatterns: ['dist/', 'node_modules/', '*.js', '*.cjs'],
+  ignorePatterns: ['dist/', 'node_modules/', '*.js', '*.cjs', 'src/core/test/'],
 };
