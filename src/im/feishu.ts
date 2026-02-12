@@ -188,21 +188,22 @@ export class FeishuAdapter extends BaseIMAdapter {
     const session = this.sessionManager.getSessionById(sessionId);
     const repoPath = session?.repoName || session?.projectPath || 'unknown';
 
-    // 构建通用卡片 - 使用选择框
+    // 构建通用卡片 - 使用文本列表（飞书不支持 picker）
+    const optionsList = options as Array<{ optionId: string; name: string }>;
     const card: UniversalCard = {
       title: `🔐 ${repoPath}`,
       elements: [
         {
           type: 'markdown',
-          content: `**${toolName}**\n\n请选择操作：`,
+          content: `**${toolName}**\n\n请回复数字选择操作：`,
         },
         {
-          type: 'picker',
-          title: '选择操作',
-          options: options.map(opt => ({
-            optionId: opt.optionId,
-            name: opt.name,
-          })),
+          type: 'markdown',
+          content: optionsList.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n'),
+        },
+        {
+          type: 'markdown',
+          content: '\n💡 直接回复选项名称或序号即可',
         },
       ],
     };
