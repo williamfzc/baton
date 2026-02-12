@@ -255,6 +255,8 @@ export class SessionManager extends EventEmitter {
       };
     }
 
+    // 直接返回仓库列表卡片（不通过 permissionRequest 事件）
+    const currentRepo = this.getCurrentRepo();
     return new Promise(resolve => {
       const requestId = generateUUID();
       session.pendingInteractions.set(requestId, {
@@ -315,18 +317,37 @@ export class SessionManager extends EventEmitter {
         },
       });
 
-      this.emit('permissionRequest', {
-        sessionId: session.id,
-        requestId,
-        userId: session.userId,
-        request: {
-          sessionId: session.id,
-          toolCall: { title: '📦 选择仓库', toolCallId: 'repo_selection' },
-          options: repos.map(r => ({
-            optionId: String(r.index),
-            name: r.name,
-            kind: 'allow_once' as const,
-          })),
+      // 直接 resolve 返回仓库列表卡片
+      resolve({
+        success: true,
+        message: '请选择仓库',
+        card: {
+          title: '📦 选择仓库',
+          elements: [
+            ...(currentRepo
+              ? [
+                  {
+                    type: 'markdown' as const,
+                    content: `📂 当前仓库：**${currentRepo.name}**\n`,
+                  },
+                  {
+                    type: 'hr' as const,
+                  },
+                ]
+              : []),
+            {
+              type: 'markdown' as const,
+              content: '请回复序号选择仓库：',
+            },
+            {
+              type: 'markdown' as const,
+              content: repos.map((r, idx) => `${idx + 1}. ${r.name}`).join('\n'),
+            },
+            {
+              type: 'markdown' as const,
+              content: '\n💡 直接回复序号或仓库名称即可',
+            },
+          ],
         },
       });
     });
