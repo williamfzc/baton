@@ -1,8 +1,7 @@
 /**
  * 会话管理器
- * 管理用户会话生命周期，包括创建、查找、销毁和 ACP Agent 进程的启停
- * 提供用户隔离机制，确保每个用户有独立的执行环境和状态
- * 支持多仓库切换，每个仓库有独立的 session
+ * 维护对话级仓库游标（Conversation Cursor）与会话级执行状态（SessionKey）
+ * 保证切仓库只影响后续路由，不影响已创建会话和已入队任务归属
  */
 import type { Session, IMResponse, RepoInfo } from '../types';
 import type { UniversalCard } from '../im/types';
@@ -25,13 +24,12 @@ function generateUUID(): string {
   });
 }
 
-// 内存存储，进程重启即重置
-const sessions = new Map<string, Session>();
-
 export class SessionManager extends EventEmitter {
+  private sessions = new Map<string, Session>();
+  private conversationCursors = new Map<string, string>();
   private permissionTimeout: number;
   private repoManager: RepoManager | null = null;
-  private currentRepoInfo: RepoInfo | null = null;
+  private defaultRepoInfo: RepoInfo | null = null;
   private executor: string;
   private acpLaunchConfig?: ACPLaunchConfig;
 
@@ -51,15 +49,40 @@ export class SessionManager extends EventEmitter {
   }
 
   setCurrentRepo(repoInfo: RepoInfo): void {
-    this.currentRepoInfo = repoInfo;
+    // 兼容旧接口：仅设置默认仓库，不做全局切换
+    this.defaultRepoInfo = repoInfo;
   }
 
   getCurrentRepo(): RepoInfo | null {
-    return this.currentRepoInfo;
+    return this.defaultRepoInfo;
   }
 
   getRepoManager(): RepoManager | null {
     return this.repoManager;
+  }
+
+  private buildConversationKey(userId: string, contextId: string | undefined): string {
+    return contextId ? `${userId}:${contextId}` : `${userId}:__default__`;
+  }
+
+  getConversationRepo(userId: string, contextId: string | undefined): RepoInfo | null {
+    const cursor = this.conversationCursors.get(this.buildConversationKey(userId, contextId));
+    if (!cursor) {
+      return this.defaultRepoInfo;
+    }
+    return this.repoManager?.getRepoByPath(cursor) || this.defaultRepoInfo;
+  }
+
+  resolveProjectPath(userId: string, contextId: string | undefined): string {
+    return this.getConversationRepo(userId, contextId)?.path || '';
+  }
+
+  switchConversationRepo(userId: string, contextId: string | undefined, repoInfo: RepoInfo): void {
+    const key = this.buildConversationKey(userId, contextId);
+    this.conversationCursors.set(key, repoInfo.path);
+    if (!this.defaultRepoInfo) {
+      this.defaultRepoInfo = repoInfo;
+    }
   }
 
   private buildSessionKey(
@@ -80,27 +103,32 @@ export class SessionManager extends EventEmitter {
   ): Promise<Session> {
     const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
 
-    if (!sessions.has(sessionKey)) {
+    if (!this.sessions.has(sessionKey)) {
       const session: Session = {
         id: generateUUID(),
         userId,
+        contextId,
         projectPath,
-        repoName: this.currentRepoInfo?.name,
+        repoName:
+          this.repoManager?.getRepoByPath(projectPath)?.name ||
+          this.defaultRepoInfo?.name ||
+          path.basename(projectPath),
         acpClient: null,
         queue: {
           pending: [],
           current: null,
         },
         isProcessing: false,
+        state: 'IDLE',
         availableModes: [],
         availableModels: [],
         pendingInteractions: new Map(),
       };
-      sessions.set(sessionKey, session);
+      this.sessions.set(sessionKey, session);
       logger.info(`[Session] Created new session for user ${userId} in ${projectPath}`);
     }
 
-    const session = sessions.get(sessionKey)!;
+    const session = this.sessions.get(sessionKey)!;
 
     // 确保 agent 进程已启动
     if (!session.acpClient) {
@@ -110,6 +138,14 @@ export class SessionManager extends EventEmitter {
       const permissionHandler = async (req: RequestPermissionRequest): Promise<string> => {
         return new Promise<string>((resolve, reject) => {
           const requestId = generateUUID();
+
+          // 每个会话最多一个 pending interaction，避免多交互串扰
+          if (session.pendingInteractions.size > 0) {
+            for (const [existingId, existing] of session.pendingInteractions.entries()) {
+              existing.reject('replaced by new interaction');
+              session.pendingInteractions.delete(existingId);
+            }
+          }
 
           session.pendingInteractions.set(requestId, {
             type: 'permission',
@@ -127,6 +163,7 @@ export class SessionManager extends EventEmitter {
             { sessionId: session.id, requestId, tool: req.toolCall.title },
             'Permission requested, waiting for user...'
           );
+          session.state = 'WAITING_CONFIRM';
 
           // 触发事件通知 IM 层
           this.emit('permissionRequest', {
@@ -149,6 +186,7 @@ export class SessionManager extends EventEmitter {
                 'deny';
               pending?.resolve(fallbackOption);
               session.pendingInteractions.delete(requestId);
+              session.state = session.queue.current ? 'RUNNING' : 'IDLE';
               logger.warn({ sessionId: session.id, requestId }, 'Permission request timed out');
             }
           }, this.permissionTimeout);
@@ -184,7 +222,7 @@ export class SessionManager extends EventEmitter {
   ): Promise<IMResponse> {
     // 查找 session
     let session: Session | undefined;
-    for (const s of sessions.values()) {
+    for (const s of this.sessions.values()) {
       if (s.id === sessionId) {
         session = s;
         break;
@@ -211,28 +249,34 @@ export class SessionManager extends EventEmitter {
     let finalOptionId = optionIdOrIndex;
     const options = pending.data.options;
 
-    // 检查是否是序号（用户看到的是 1-based，但数组是 0-based）
+    // 检查是否是数字输入：
+    // 兼容历史行为（0-based）与当前交互习惯（1-based）
     const index = parseInt(optionIdOrIndex, 10);
     if (!isNaN(index)) {
-      // 将 1-based 转成 0-based
-      const arrayIndex = index - 1;
-      if (arrayIndex >= 0 && arrayIndex < options.length) {
-        finalOptionId = options[arrayIndex].optionId;
+      if (index >= 0 && index < options.length) {
+        // 兼容历史测试/行为：输入 0..N-1 直接按数组下标处理
+        finalOptionId = options[index].optionId;
       } else {
-        return {
-          success: false,
-          message: `无效的序号: ${index}。请输入 1-${options.length} 之间的数字`,
-          card: this.createStatusCard(
-            '交互处理',
-            `无效的序号: ${index}。请输入 1-${options.length}`,
-            false
-          ),
-        };
+        const oneBasedIndex = index - 1;
+        if (oneBasedIndex >= 0 && oneBasedIndex < options.length) {
+          finalOptionId = options[oneBasedIndex].optionId;
+        } else {
+          return {
+            success: false,
+            message: `无效的选项: ${optionIdOrIndex}。可选: ${options.map(o => o.optionId).join(', ')} 或序号 1-${options.length}`,
+            card: this.createStatusCard('交互处理', `无效的选项: ${optionIdOrIndex}`, false),
+          };
+        }
       }
     } else {
-      // 检查 optionId 是否存在
-      const exists = options.some(o => o.optionId === optionIdOrIndex);
-      if (!exists) {
+      const normalizedInput = optionIdOrIndex.trim().toLowerCase();
+      const matchedById = options.find(o => o.optionId.toLowerCase() === normalizedInput);
+      const matchedByName = options.find(o => o.name.trim().toLowerCase() === normalizedInput);
+      if (matchedById) {
+        finalOptionId = matchedById.optionId;
+      } else if (matchedByName) {
+        finalOptionId = matchedByName.optionId;
+      } else {
         return {
           success: false,
           message: `无效的选项: ${optionIdOrIndex}。可选: ${options.map(o => o.optionId).join(', ')} 或序号 1-${options.length}`,
@@ -250,10 +294,10 @@ export class SessionManager extends EventEmitter {
           : finalOptionId;
         const targetRepo = repoManager.findRepo(repoIdentifier);
         if (targetRepo) {
-          await this.resetAllSessions();
-          this.setCurrentRepo(targetRepo);
+          this.switchConversationRepo(session.userId, session.contextId, targetRepo);
           pending.resolve(finalOptionId);
           session.pendingInteractions.delete(requestId);
+          session.state = session.queue.current ? 'RUNNING' : 'IDLE';
           logger.info(
             { sessionId, requestId, finalOptionId, repoName: targetRepo.name },
             'Repository switched'
@@ -284,6 +328,7 @@ export class SessionManager extends EventEmitter {
       }
       pending.resolve(finalOptionId);
       session.pendingInteractions.delete(requestId);
+      session.state = session.queue.current ? 'RUNNING' : 'IDLE';
       return {
         success: false,
         message: `未找到仓库: ${finalOptionId}`,
@@ -294,6 +339,7 @@ export class SessionManager extends EventEmitter {
     // 其他类型：执行回调并返回通用确认卡片
     pending.resolve(finalOptionId);
     session.pendingInteractions.delete(requestId);
+    session.state = session.queue.current ? 'RUNNING' : 'IDLE';
 
     logger.info({ sessionId, requestId, finalOptionId }, 'Interaction resolved by user');
     return {
@@ -315,7 +361,7 @@ export class SessionManager extends EventEmitter {
       repos.map(r => ({ index: r.index, name: r.name, path: r.path }))
     );
 
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的交互
@@ -328,7 +374,7 @@ export class SessionManager extends EventEmitter {
     }
 
     // 使用 Promise 等待用户选择（不立即 resolve）
-    const currentRepo = this.getCurrentRepo();
+    const currentRepo = this.getConversationRepo(userId, contextId);
     const listCard: IMResponse = {
       success: true,
       message: '请选择仓库',
@@ -365,6 +411,7 @@ export class SessionManager extends EventEmitter {
     // 设置 pendingInteraction，Promise 会在用户选择后 resolve
     return new Promise(resolve => {
       const requestId = generateUUID();
+      session.state = 'WAITING_CONFIRM';
       session.pendingInteractions.set(requestId, {
         type: 'repo_selection',
         resolve: async _optionId => {
@@ -398,11 +445,11 @@ export class SessionManager extends EventEmitter {
     projectPath: string
   ): Session | undefined {
     const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
-    return sessions.get(sessionKey);
+    return this.sessions.get(sessionKey);
   }
 
   getSessionById(sessionId: string): Session | undefined {
-    for (const session of sessions.values()) {
+    for (const session of this.sessions.values()) {
       if (session.id === sessionId) {
         return session;
       }
@@ -411,9 +458,9 @@ export class SessionManager extends EventEmitter {
   }
 
   async resetSession(userId: string, contextId: string | undefined): Promise<IMResponse> {
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const sessionKey = this.buildSessionKey(userId, contextId, projectPath);
-    const session = sessions.get(sessionKey);
+    const session = this.sessions.get(sessionKey);
 
     if (!session) {
       return {
@@ -457,9 +504,10 @@ export class SessionManager extends EventEmitter {
     session.queue.pending = [];
     session.queue.current = null;
     session.isProcessing = false;
+    session.state = 'IDLE';
 
     // 5. 删除会话
-    sessions.delete(sessionKey);
+    this.sessions.delete(sessionKey);
 
     logger.info({ userId, contextId, repoName, wasRunning, pid }, 'Session reset complete');
 
@@ -511,7 +559,7 @@ export class SessionManager extends EventEmitter {
   }
 
   getQueueStatus(userId: string, contextId: string | undefined): IMResponse {
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const session = this.getSession(userId, contextId, projectPath);
     if (!session) {
       return {
@@ -537,6 +585,11 @@ export class SessionManager extends EventEmitter {
     const statusIcon = running ? '🟢' : '🔴';
     const statusText = running ? '运行中' : '已停止';
     const repoName = session.repoName || path.basename(session.projectPath);
+    const waitingCount = session.pendingInteractions.size;
+    const planStatus =
+      session.acpClient && typeof session.acpClient.getPlanStatus === 'function'
+        ? session.acpClient.getPlanStatus()
+        : null;
 
     // 构建卡片元素
     const elements: { type: 'markdown'; content: string }[] = [
@@ -552,7 +605,26 @@ export class SessionManager extends EventEmitter {
         type: 'markdown' as const,
         content: `**🤖 Agent：** ${statusIcon} ${statusText}${pid ? ` | PID: \`${pid}\`` : ''}`,
       },
+      {
+        type: 'markdown' as const,
+        content: `**🧭 会话状态：** \`${session.state}\` | **⏳ 待确认交互：** ${waitingCount}`,
+      },
     ];
+
+    if (planStatus && planStatus.entries.length > 0) {
+      const currentStep = planStatus.current?.content
+        ? `\n**🧩 当前步骤：** ${planStatus.current.content.substring(0, 100)}${planStatus.current.content.length > 100 ? '...' : ''}`
+        : '';
+      elements.push({
+        type: 'markdown' as const,
+        content: `**🗺️ Agent 计划：** ${planStatus.summary}${currentStep}`,
+      });
+    } else {
+      elements.push({
+        type: 'markdown' as const,
+        content: '**🗺️ Agent 计划：** 暂无计划信息',
+      });
+    }
 
     // 当前任务
     if (session.queue.current) {
@@ -568,18 +640,19 @@ export class SessionManager extends EventEmitter {
     }
 
     // 待执行队列
-    if (session.queue.pending.length > 0) {
-      const queueList = session.queue.pending
-        .map(
-          (task, idx) =>
-            `${idx + 1}. \`${task.content.substring(0, 50)}${task.content.length > 50 ? '...' : ''}\``
-        )
-        .join('\n');
-      elements.push({
-        type: 'markdown' as const,
-        content: `**📬 待执行队列 (${session.queue.pending.length} 个)：**\n${queueList}`,
-      });
-    }
+    const queueList = session.queue.pending
+      .map(
+        (task, idx) =>
+          `${idx + 1}. \`${task.content.substring(0, 50)}${task.content.length > 50 ? '...' : ''}\``
+      )
+      .join('\n');
+    elements.push({
+      type: 'markdown' as const,
+      content:
+        session.queue.pending.length > 0
+          ? `**📬 待执行队列 (${session.queue.pending.length} 个)：**\n${queueList}`
+          : '**📬 待执行队列 (0 个)：**\n1. `(空)`',
+    });
 
     const card: UniversalCard = {
       title: `📊 会话状态 - ${repoName}`,
@@ -591,6 +664,15 @@ export class SessionManager extends EventEmitter {
     messageText += `📂 路径: ${session.projectPath}\n`;
     messageText += `⚙️ Executor: ${this.executor}\n`;
     messageText += `🤖 Agent: ${statusText}${pid ? ` (PID: ${pid})` : ''}\n`;
+    messageText += `🧭 会话状态: ${session.state} | ⏳ 待确认交互: ${waitingCount}\n`;
+    if (planStatus && planStatus.entries.length > 0) {
+      messageText += `🗺️ Agent 计划: ${planStatus.summary}\n`;
+      if (planStatus.current?.content) {
+        messageText += `🧩 当前步骤: ${planStatus.current.content.substring(0, 50)}${planStatus.current.content.length > 50 ? '...' : ''}\n`;
+      }
+    } else {
+      messageText += '🗺️ Agent 计划: 暂无计划信息\n';
+    }
     if (session.queue.current) {
       messageText += `📋 当前任务: ${session.queue.current.content.substring(0, 50)}...\n`;
     } else {
@@ -610,6 +692,8 @@ export class SessionManager extends EventEmitter {
         pending: session.queue.pending,
         pendingCount: session.queue.pending.length,
         isProcessing: session.isProcessing,
+        state: session.state,
+        planStatus,
       },
       card,
     };
@@ -633,7 +717,7 @@ export class SessionManager extends EventEmitter {
     taskId: string | undefined,
     contextId: string | undefined
   ): Promise<IMResponse> {
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const session = this.getSession(userId, contextId, projectPath);
     if (!session) {
       return {
@@ -655,6 +739,7 @@ export class SessionManager extends EventEmitter {
       session.queue.pending = [];
       session.queue.current = null;
       session.isProcessing = false;
+      session.state = 'STOPPED';
 
       const message = stoppedCurrent
         ? `✅ 已停止当前任务，并清空队列中的 ${queueCount} 个待执行任务`
@@ -715,6 +800,7 @@ export class SessionManager extends EventEmitter {
       await session.acpClient.cancelCurrentTask();
       session.queue.current = null;
       session.isProcessing = false;
+      session.state = 'IDLE';
 
       // 如果队列还有任务，自动开始下一个
       if (session.queue.pending.length > 0) {
@@ -749,7 +835,7 @@ export class SessionManager extends EventEmitter {
 
   // 触发模式选择
   async triggerModeSelection(userId: string, contextId: string | undefined): Promise<IMResponse> {
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的权限请求
@@ -791,6 +877,7 @@ export class SessionManager extends EventEmitter {
 
     return new Promise(resolve => {
       const requestId = generateUUID();
+      session.state = 'WAITING_CONFIRM';
       session.pendingInteractions.set(requestId, {
         type: 'mode_selection',
         resolve: async optionId => {
@@ -837,7 +924,7 @@ export class SessionManager extends EventEmitter {
 
   // 触发模型选择
   async triggerModelSelection(userId: string, contextId: string | undefined): Promise<IMResponse> {
-    const projectPath = this.currentRepoInfo?.path || '';
+    const projectPath = this.resolveProjectPath(userId, contextId);
     const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
     // 检查是否已有待处理的权限请求
@@ -879,6 +966,7 @@ export class SessionManager extends EventEmitter {
 
     return new Promise(resolve => {
       const requestId = generateUUID();
+      session.state = 'WAITING_CONFIRM';
       session.pendingInteractions.set(requestId, {
         type: 'model_selection',
         resolve: async optionId => {
@@ -924,12 +1012,13 @@ export class SessionManager extends EventEmitter {
   }
 
   async resetAllSessions(): Promise<void> {
-    for (const session of sessions.values()) {
+    for (const session of this.sessions.values()) {
       if (session.acpClient) {
         await session.acpClient.stop();
       }
     }
-    sessions.clear();
+    this.sessions.clear();
+    this.conversationCursors.clear();
     logger.info('[Session] All sessions reset');
   }
 }

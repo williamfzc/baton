@@ -116,6 +116,7 @@ export class TestSessionManager extends EventEmitter {
           current: null,
         },
         isProcessing: false,
+        state: 'IDLE',
         availableModes: [],
         availableModels: [],
         pendingInteractions: new Map(),
@@ -236,23 +237,22 @@ export class TestSessionManager extends EventEmitter {
     let finalOptionId = optionIdOrIndex;
     const options = pending.data.options;
 
-    // 检查是否是序号（用户看到的是 1-based，但数组是 0-based）
+    // 检查是否是数字输入，兼容 0-based 与 1-based
     const index = parseInt(optionIdOrIndex, 10);
     if (!isNaN(index)) {
-      // 将 1-based 转成 0-based
-      const arrayIndex = index - 1;
-      if (arrayIndex >= 0 && arrayIndex < options.length) {
-        finalOptionId = options[arrayIndex].optionId;
+      if (index >= 0 && index < options.length) {
+        finalOptionId = options[index].optionId;
       } else {
-        return {
-          success: false,
-          message: `无效的序号: ${index}。请输入 1-${options.length} 之间的数字`,
-          card: this.createStatusCard(
-            '交互处理',
-            `无效的序号: ${index}。请输入 1-${options.length}`,
-            false
-          ),
-        };
+        const oneBasedIndex = index - 1;
+        if (oneBasedIndex >= 0 && oneBasedIndex < options.length) {
+          finalOptionId = options[oneBasedIndex].optionId;
+        } else {
+          return {
+            success: false,
+            message: `无效的选项: ${optionIdOrIndex}。可选序号 1-${options.length}`,
+            card: this.createStatusCard('交互处理', `无效的选项: ${optionIdOrIndex}`, false),
+          };
+        }
       }
     } else {
       const exists = options.some(o => o.optionId === optionIdOrIndex);

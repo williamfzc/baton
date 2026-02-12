@@ -22,6 +22,7 @@ describe('TaskQueueEngine', () => {
         current: null,
       },
       isProcessing: false,
+      state: 'IDLE',
       availableModes: [],
       availableModels: [],
       pendingInteractions: new Map(),
@@ -192,6 +193,39 @@ describe('TaskQueueEngine', () => {
       const result = await queueEngine.enqueue(session, '/test', 'command');
 
       expect(result.success).toBe(true);
+    });
+
+    it('should prepend plan progress to task completion response', async () => {
+      const session = createMockSession();
+      session.acpClient = {
+        sendPrompt: async () => ({ success: true, message: '最终回答内容' }),
+        sendCommand: async () => ({ success: true, message: '' }),
+        getPlanStatus: () => ({
+          entries: [
+            { status: 'completed', content: '收集上下文' },
+            { status: 'in_progress', content: '实现并验证改动' },
+          ],
+          updatedAt: Date.now(),
+          summary: '总计 2 步，完成 1，进行中 1，待处理 0',
+          counts: { total: 2, completed: 1, inProgress: 1, pending: 0, other: 0 },
+          current: { status: 'in_progress', content: '实现并验证改动' },
+        }),
+        startAgent: async () => {},
+        stop: async () => {},
+        getModeState: () => ({ availableModes: [], currentModeId: undefined }),
+        getModelState: () => ({ availableModels: [], currentModelId: undefined }),
+        setMode: async () => ({ success: true, message: '' }),
+        setModel: async () => ({ success: true, message: '' }),
+        cancelCurrentTask: async () => {},
+      } as any;
+
+      await queueEngine.enqueue(session, 'Test prompt', 'prompt');
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(capturedResponses.length).toBe(1);
+      expect(capturedResponses[0].message).toContain('📍 任务进度: 总计 2 步，完成 1，进行中 1，待处理 0');
+      expect(capturedResponses[0].message).toContain('🧩 当前步骤: 实现并验证改动');
+      expect(capturedResponses[0].message).toContain('最终回答内容');
     });
   });
 });

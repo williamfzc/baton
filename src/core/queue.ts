@@ -1,14 +1,10 @@
 /**
  * 任务队列引擎
- * 负责管理用户请求的 FIFO 队列，确保同一会话串行处理
- * 是 Baton 核心机制层的关键组件，协调用户请求与 ACP Agent 的执行
- *
- * 线程安全设计：
- * - 使用 session 级别的锁来防止竞态条件
- * - 确保 enqueue 操作的原子性
- * - 防止重复调用 processNext 导致的状态不一致
+ * 负责管理 SessionKey 级别 FIFO 队列，确保会话内串行、会话间并行
+ * 支持会话状态机（IDLE/RUNNING/WAITING_CONFIRM/STOPPED）下的安全调度
  */
 import type { Session, Task, IMResponse } from '../types';
+import type { ACPPlanStatus } from '../acp/client';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('TaskQueue');
@@ -66,8 +62,12 @@ export class TaskQueueEngine {
     const release = await acquireLock();
 
     try {
-      // 双重检查：再次确认状态（可能在上一个锁释放后状态已变）
-      const shouldExecuteImmediately = !session.isProcessing && !session.queue.current;
+      // 只有空闲态才允许立即执行；WAITING_CONFIRM/STOPPED 仅入队不执行
+      const shouldExecuteImmediately =
+        session.state === 'IDLE' &&
+        !session.isProcessing &&
+        !session.queue.current &&
+        session.pendingInteractions.size === 0;
 
       const task: Task = {
         id: generateUUID(),
@@ -80,6 +80,7 @@ export class TaskQueueEngine {
         // 立即执行
         session.queue.current = task;
         session.isProcessing = true;
+        session.state = 'RUNNING';
 
         // 异步执行，不阻塞
         this.processTask(session, task).catch((err: Error) => logger.error(err));
@@ -95,14 +96,81 @@ export class TaskQueueEngine {
       // Position includes current running task: position = items ahead + 1
       const position = session.queue.pending.length;
 
+      const pausedHint =
+        session.state === 'WAITING_CONFIRM'
+          ? '（当前会话在等待确认，确认后将自动继续）'
+          : session.state === 'STOPPED'
+            ? '（当前会话已停止，请先 /reset 后再继续执行）'
+            : '';
+
       return {
         success: true,
-        message: `请求已加入队列，当前排在第 ${position} 位，请稍候...`,
-        data: { taskId: task.id, position },
+        message: [
+          `会话当前忙碌，已为你排队，当前排在第 ${position} 位。${pausedHint}`,
+          this.buildQueueSnapshot(session),
+        ].join('\n\n'),
+        data: { taskId: task.id, position, queue: this.getQueueData(session) },
       };
     } finally {
       release();
     }
+  }
+
+  private buildQueueSnapshot(session: Session): string {
+    const current = session.queue.current
+      ? `当前执行: ${this.truncate(session.queue.current.content)}`
+      : '当前执行: 空闲';
+    const queued = session.queue.pending
+      .slice(0, 5)
+      .map((task, index) => `${index + 1}. ${this.truncate(task.content)}`)
+      .join('\n');
+    const queuedText = queued || '1. (无)';
+
+    return `状态: ${session.state}\n${current}\n队列(${session.queue.pending.length}):\n${queuedText}`;
+  }
+
+  private getQueueData(session: Session): { current: Task | null; pending: Task[]; state: string } {
+    return {
+      current: session.queue.current,
+      pending: session.queue.pending,
+      state: session.state,
+    };
+  }
+
+  private truncate(content: string, limit: number = 60): string {
+    return content.length > limit ? `${content.slice(0, limit)}...` : content;
+  }
+
+  private buildPlanPrefix(planStatus: ACPPlanStatus): string {
+    const currentStep = planStatus.current?.content
+      ? `\n🧩 当前步骤: ${this.truncate(planStatus.current.content, 80)}`
+      : '';
+    return `📍 任务进度: ${planStatus.summary}${currentStep}`;
+  }
+
+  private attachPlanProgressPrefix(session: Session, response: IMResponse): IMResponse {
+    if (!response.success || !response.message || !session.acpClient) {
+      return response;
+    }
+
+    if (typeof session.acpClient.getPlanStatus !== 'function') {
+      return response;
+    }
+
+    const planStatus = session.acpClient.getPlanStatus();
+    if (!planStatus || planStatus.entries.length === 0) {
+      return response;
+    }
+
+    const planPrefix = this.buildPlanPrefix(planStatus);
+    if (response.message.startsWith(planPrefix)) {
+      return response;
+    }
+
+    return {
+      ...response,
+      message: `${planPrefix}\n\n${response.message}`,
+    };
   }
 
   /**
@@ -111,6 +179,7 @@ export class TaskQueueEngine {
    */
   private async processTask(session: Session, task: Task): Promise<void> {
     logger.info({ taskId: task.id, content: task.content.substring(0, 50) }, 'Processing task');
+    session.state = 'RUNNING';
 
     if (!session.acpClient) {
       logger.error({ taskId: task.id }, 'ACP client not initialized');
@@ -137,6 +206,8 @@ export class TaskQueueEngine {
         logger.info({ taskId: task.id }, 'Command completed');
       }
 
+      response = this.attachPlanProgressPrefix(session, response);
+
       // 发送结果给用户
       if (this.onTaskComplete) {
         await this.onTaskComplete(session, response);
@@ -161,11 +232,20 @@ export class TaskQueueEngine {
    * 注意：此方法仅在 processTask 的 finally 块中调用，确保串行执行
    */
   private async processNext(session: Session): Promise<void> {
+    if (session.state === 'WAITING_CONFIRM' || session.state === 'STOPPED') {
+      logger.info(
+        { sessionId: session.id, state: session.state },
+        'Session paused, skip scheduling'
+      );
+      return;
+    }
+
     // 先检查队列，再重置状态，避免竞态窗口
     if (session.queue.pending.length > 0) {
       const nextTask = session.queue.pending.shift()!;
       session.queue.current = nextTask;
       // isProcessing 保持 true，无需重新设置
+      session.state = 'RUNNING';
 
       logger.info({ taskId: nextTask.id }, 'Starting next task');
 
@@ -175,6 +255,7 @@ export class TaskQueueEngine {
       // 没有待处理任务时，才重置状态
       session.queue.current = null;
       session.isProcessing = false;
+      session.state = 'IDLE';
       logger.info('No more tasks in queue');
     }
   }

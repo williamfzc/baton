@@ -40,6 +40,25 @@ export interface ACPLaunchConfig {
   env?: Record<string, string>;
 }
 
+export interface ACPPlanEntry {
+  status: string;
+  content: string;
+}
+
+export interface ACPPlanStatus {
+  entries: ACPPlanEntry[];
+  updatedAt: number;
+  summary: string;
+  counts: {
+    total: number;
+    completed: number;
+    inProgress: number;
+    pending: number;
+    other: number;
+  };
+  current?: ACPPlanEntry;
+}
+
 /**
  * 扩展的 ACP 会话状态
  * 包含处于 ACP 标准扩展阶段的模型信息
@@ -61,6 +80,8 @@ class BatonClient implements Client {
   public currentModeId?: string;
   public availableModels: ModelInfo[] = [];
   public currentModelId?: string;
+  private latestPlanEntries: ACPPlanEntry[] = [];
+  private latestPlanUpdatedAt: number | null = null;
 
   constructor(permissionHandler: PermissionHandler) {
     this.permissionHandler = permissionHandler;
@@ -86,6 +107,11 @@ class BatonClient implements Client {
         break;
 
       case 'plan': {
+        this.latestPlanEntries = update.entries.map(entry => ({
+          status: String(entry.status || 'pending'),
+          content: String(entry.content || ''),
+        }));
+        this.latestPlanUpdatedAt = Date.now();
         const planSummary = update.entries.map(e => `[${e.status}] ${e.content}`).join('\n');
         logger.info(`[ACP] Plan updated:\n${planSummary || 'Agent is planning...'}`);
         break;
@@ -296,6 +322,61 @@ class BatonClient implements Client {
       this.messageBuffer = [];
       this.responsePromise.resolve(fullResponse || `[Completed: ${stopReason}]`);
     }
+  }
+
+  getPlanStatus(): ACPPlanStatus | null {
+    if (!this.latestPlanUpdatedAt) {
+      return null;
+    }
+
+    const counts = {
+      total: this.latestPlanEntries.length,
+      completed: 0,
+      inProgress: 0,
+      pending: 0,
+      other: 0,
+    };
+
+    for (const entry of this.latestPlanEntries) {
+      const normalized = entry.status.toLowerCase();
+      if (normalized === 'completed' || normalized === 'done') {
+        counts.completed += 1;
+      } else if (
+        normalized === 'in_progress' ||
+        normalized === 'in-progress' ||
+        normalized === 'running' ||
+        normalized === 'active'
+      ) {
+        counts.inProgress += 1;
+      } else if (
+        normalized === 'pending' ||
+        normalized === 'todo' ||
+        normalized === 'not_started' ||
+        normalized === 'not-started'
+      ) {
+        counts.pending += 1;
+      } else {
+        counts.other += 1;
+      }
+    }
+
+    const current = this.latestPlanEntries.find(entry => {
+      const normalized = entry.status.toLowerCase();
+      return (
+        normalized === 'in_progress' ||
+        normalized === 'in-progress' ||
+        normalized === 'running' ||
+        normalized === 'active'
+      );
+    });
+
+    return {
+      entries: [...this.latestPlanEntries],
+      updatedAt: this.latestPlanUpdatedAt,
+      counts,
+      current,
+      summary: `总计 ${counts.total} 步，完成 ${counts.completed}，进行中 ${counts.inProgress}，待处理 ${counts.pending}`,
+    };
   }
 }
 
@@ -519,6 +600,10 @@ export class ACPClient {
       availableModels: this.batonClient.availableModels,
       currentModelId: this.batonClient.currentModelId,
     };
+  }
+
+  getPlanStatus(): ACPPlanStatus | null {
+    return this.batonClient.getPlanStatus();
   }
 
   // 设置模式/模型
