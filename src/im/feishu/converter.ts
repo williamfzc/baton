@@ -83,16 +83,13 @@ function convertElement(element: CardElement): FeishuCard | null {
       };
 
     case 'picker':
+      // 飞书使用 select_static 作为选择器
       return {
-        tag: 'picker',
-        name: element.title,
-        options: element.options.map(opt => ({
-          text: {
-            tag: 'plain_text',
-            content: opt.name,
-          },
-          value: opt.optionId,
-        })),
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `**${element.title}**`,
+        },
       };
 
     default:
