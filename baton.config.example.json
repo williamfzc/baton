@@ -16,6 +16,22 @@
     "apiBase": "https://api.telegram.org/bot123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "permissionTimeout": 300
   },
+  "whatsapp": {
+    "accessToken": "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "phoneNumberId": "123456789012345",
+    "verifyToken": "whatsapp-verify-token",
+    "apiBase": "https://graph.facebook.com/v20.0",
+    "permissionTimeout": 300,
+    "port": 8082,
+    "webhookPath": "/webhook/whatsapp"
+  },
+  "slack": {
+    "botToken": "xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "signingSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "permissionTimeout": 300,
+    "port": 8081,
+    "webhookPath": "/webhook/slack"
+  },
   "acp": {
     "command": "opencode",
     "args": ["acp"],

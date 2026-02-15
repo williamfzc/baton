@@ -37,6 +37,7 @@ export enum IMPlatform {
   CLI = 'cli',
   FEISHU = 'feishu',
   TELEGRAM = 'telegram',
+  WHATSAPP = 'whatsapp',
   SLACK = 'slack',
   DISCORD = 'discord',
 }

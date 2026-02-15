@@ -57,8 +57,9 @@ bun run start:feishu
 | --------------- | --------- | -------------------------- |
 | **飞书 / Lark** | ✅ 已支持 | WebSocket 长链接，内网可用 |
 | **Telegram**    | ✅ 已支持 | Bot API 长轮询             |
+| **WhatsApp**    | ✅ 已支持 | Webhook + Graph API        |
+| **Slack**       | ✅ 已支持 | Events API Webhook         |
 | **CLI**         | ✅ 已支持 | 本地命令行交互             |
-| **Slack**       | 🔮 计划中 | -                          |
 | **Discord**     | 🔮 计划中 | -                          |
 
 ## 支持的 Executor
@@ -107,6 +108,20 @@ claude-code-acp --help
   "telegram": {
     "botToken": "123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   },
+  "whatsapp": {
+    "accessToken": "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "phoneNumberId": "123456789012345",
+    "verifyToken": "whatsapp-verify-token",
+    "apiBase": "https://graph.facebook.com/v20.0",
+    "port": 8082,
+    "webhookPath": "/webhook/whatsapp"
+  },
+  "slack": {
+    "botToken": "xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "signingSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "port": 8081,
+    "webhookPath": "/webhook/slack"
+  },
   "acp": {
     "executor": "opencode"
   }
@@ -148,6 +163,17 @@ export BATON_EXECUTOR=codex
 export BATON_FEISHU_APP_ID=cli_xxx
 export BATON_FEISHU_APP_SECRET=xxx
 export BATON_TELEGRAM_BOT_TOKEN=123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_WHATSAPP_ACCESS_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_WHATSAPP_PHONE_NUMBER_ID=123456789012345
+export BATON_WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token
+export BATON_WHATSAPP_API_BASE=https://graph.facebook.com/v20.0
+export BATON_WHATSAPP_PORT=8082
+export BATON_WHATSAPP_WEBHOOK_PATH=/webhook/whatsapp
+export BATON_SLACK_BOT_TOKEN=xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_SLACK_SIGNING_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_SLACK_API_BASE=https://slack.com/api
+export BATON_SLACK_PORT=8081
+export BATON_SLACK_WEBHOOK_PATH=/webhook/slack
 ```
 
 ### 2. 启动
@@ -158,6 +184,12 @@ baton feishu
 
 # Telegram 模式
 baton telegram
+
+# WhatsApp 模式
+baton whatsapp
+
+# Slack 模式
+baton slack
 
 # CLI 模式
 baton cli

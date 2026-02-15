@@ -86,6 +86,51 @@ function loadEnvConfig(): Partial<BatonConfig> {
     console.log('[Config] Loaded Telegram credentials from environment variables');
   }
 
+  const whatsappAccessToken = process.env.BATON_WHATSAPP_ACCESS_TOKEN;
+  const whatsappPhoneNumberId = process.env.BATON_WHATSAPP_PHONE_NUMBER_ID;
+  const whatsappVerifyToken = process.env.BATON_WHATSAPP_VERIFY_TOKEN;
+  const whatsappApiBase = process.env.BATON_WHATSAPP_API_BASE;
+  const whatsappPort = process.env.BATON_WHATSAPP_PORT;
+  const whatsappWebhookPath = process.env.BATON_WHATSAPP_WEBHOOK_PATH;
+
+  if (
+    whatsappAccessToken ||
+    whatsappPhoneNumberId ||
+    whatsappVerifyToken ||
+    whatsappApiBase ||
+    whatsappPort ||
+    whatsappWebhookPath
+  ) {
+    envConfig.whatsapp = {
+      accessToken: whatsappAccessToken || '',
+      phoneNumberId: whatsappPhoneNumberId || '',
+      verifyToken: whatsappVerifyToken || undefined,
+      apiBase: whatsappApiBase || undefined,
+      port: whatsappPort ? Number(whatsappPort) : undefined,
+      webhookPath: whatsappWebhookPath || undefined,
+    };
+
+    console.log('[Config] Loaded WhatsApp credentials from environment variables');
+  }
+
+  const slackBotToken = process.env.BATON_SLACK_BOT_TOKEN;
+  const slackSigningSecret = process.env.BATON_SLACK_SIGNING_SECRET;
+  const slackApiBase = process.env.BATON_SLACK_API_BASE;
+  const slackPort = process.env.BATON_SLACK_PORT;
+  const slackWebhookPath = process.env.BATON_SLACK_WEBHOOK_PATH;
+
+  if (slackBotToken || slackSigningSecret || slackApiBase || slackPort || slackWebhookPath) {
+    envConfig.slack = {
+      botToken: slackBotToken || '',
+      signingSecret: slackSigningSecret || undefined,
+      apiBase: slackApiBase || undefined,
+      port: slackPort ? Number(slackPort) : undefined,
+      webhookPath: slackWebhookPath || undefined,
+    };
+
+    console.log('[Config] Loaded Slack credentials from environment variables');
+  }
+
   // 从环境变量读取项目路径
   const projectPath = process.env.BATON_PROJECT_PATH;
   if (projectPath) {
@@ -127,6 +172,8 @@ function mergeConfigs(
     },
     feishu: envConfig.feishu || fileConfig.feishu,
     telegram: envConfig.telegram || fileConfig.telegram,
+    whatsapp: envConfig.whatsapp || fileConfig.whatsapp,
+    slack: envConfig.slack || fileConfig.slack,
     acp: {
       command: envConfig.acp?.command || fileConfig.acp?.command,
       args: envConfig.acp?.args || fileConfig.acp?.args,
