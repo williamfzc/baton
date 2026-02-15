@@ -53,13 +53,14 @@ bun run start:feishu
 
 ## Supported IM Platforms
 
-| Platform     | Status | Notes                     |
-| ------------ | ------ | ------------------------- |
-| **Feishu**   | ✅     | WebSocket long-connection |
-| **Telegram** | ✅     | Bot API long polling      |
+| Platform     | Status | Notes                      |
+| ------------ | ------ | -------------------------- |
+| **Feishu**   | ✅     | WebSocket long-connection  |
+| **Telegram** | ✅     | Bot API long polling       |
+| **WhatsApp** | ✅     | Webhook + Graph API        |
+| **Slack**    | ✅     | Events API webhook         |
 | **CLI**      | ✅     | Local terminal interaction |
-| **Slack**    | 🔮     | Planned                   |
-| **Discord**  | 🔮     | Planned                   |
+| **Discord**  | 🔮     | Planned                    |
 
 ## Supported Executors
 
@@ -103,6 +104,20 @@ Create `baton.config.json`:
   "telegram": {
     "botToken": "123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   },
+  "whatsapp": {
+    "accessToken": "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "phoneNumberId": "123456789012345",
+    "verifyToken": "whatsapp-verify-token",
+    "apiBase": "https://graph.facebook.com/v20.0",
+    "port": 8082,
+    "webhookPath": "/webhook/whatsapp"
+  },
+  "slack": {
+    "botToken": "xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "signingSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "port": 8081,
+    "webhookPath": "/webhook/slack"
+  },
   "acp": {
     "executor": "opencode"
   }
@@ -142,6 +157,17 @@ Store secrets in env:
 export BATON_FEISHU_APP_ID=cli_xxx
 export BATON_FEISHU_APP_SECRET=xxx
 export BATON_TELEGRAM_BOT_TOKEN=123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_WHATSAPP_ACCESS_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_WHATSAPP_PHONE_NUMBER_ID=123456789012345
+export BATON_WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token
+export BATON_WHATSAPP_API_BASE=https://graph.facebook.com/v20.0
+export BATON_WHATSAPP_PORT=8082
+export BATON_WHATSAPP_WEBHOOK_PATH=/webhook/whatsapp
+export BATON_SLACK_BOT_TOKEN=xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_SLACK_SIGNING_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export BATON_SLACK_API_BASE=https://slack.com/api
+export BATON_SLACK_PORT=8081
+export BATON_SLACK_WEBHOOK_PATH=/webhook/slack
 ```
 
 ### 2. Start
@@ -152,6 +178,12 @@ baton feishu
 
 # Telegram mode
 baton telegram
+
+# WhatsApp mode
+baton whatsapp
+
+# Slack mode
+baton slack
 
 # CLI mode
 baton cli

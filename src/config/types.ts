@@ -16,6 +16,10 @@ export interface BatonConfig {
 
   telegram?: TelegramConfig;
 
+  whatsapp?: WhatsAppConfig;
+
+  slack?: SlackConfig;
+
   // ACP 配置
   acp?: ACPConfig;
 }
@@ -39,6 +43,25 @@ export interface TelegramConfig {
   botToken: string;
   apiBase?: string;
   permissionTimeout?: number;
+}
+
+export interface WhatsAppConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  verifyToken?: string;
+  apiBase?: string;
+  permissionTimeout?: number;
+  port?: number;
+  webhookPath?: string;
+}
+
+export interface SlackConfig {
+  botToken: string;
+  signingSecret?: string;
+  apiBase?: string;
+  permissionTimeout?: number;
+  port?: number;
+  webhookPath?: string;
 }
 
 export interface ACPConfig {
