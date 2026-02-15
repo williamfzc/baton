@@ -11,6 +11,11 @@
       "permissionTimeout": 300
     }
   },
+  "telegram": {
+    "botToken": "123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "apiBase": "https://api.telegram.org/bot123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "permissionTimeout": 300
+  },
   "acp": {
     "command": "opencode",
     "args": ["acp"],

@@ -1,37 +1,28 @@
 #!/usr/bin/env node
-/**
- * 飞书服务器入口
- * 启动 WebSocket 长链接连接到飞书平台，接收和处理消息事件
- * 生产环境部署的主要入口，支持内网运行无需公网暴露
- * 支持多仓库切换
- */
 import * as path from 'node:path';
 import { loadConfig } from './config/loader';
-import { FeishuAdapter } from './im/feishu';
 import { RepoManager } from './core/repo';
 import { createLogger } from './utils/logger';
 import type { RepoInfo } from './types';
 import { registerIMAdapter, createIMAdapter } from './im/factory';
 import { IMPlatform } from './im/adapter';
+import { TelegramAdapter } from './im/telegram';
 
-const logger = createLogger('FeishuServer');
+const logger = createLogger('TelegramServer');
 
 export async function main(configPath?: string, workDir?: string) {
-  let adapter: FeishuAdapter | null = null;
+  let adapter: TelegramAdapter | null = null;
 
   try {
-    // 加载配置
     const config = loadConfig(configPath);
 
-    // 检查飞书配置
-    if (!config.feishu) {
-      logger.error('Error: Feishu configuration is required');
-      logger.error('Please create baton.config.json with feishu settings');
+    if (!config.telegram?.botToken) {
+      logger.error('Error: Telegram configuration is required');
+      logger.error('Please create baton.config.json with telegram settings');
       logger.error('See baton.config.example.json for reference');
       process.exit(1);
     }
 
-    // 优先使用命令行参数指定的工作目录，其次使用配置文件中的路径
     const rootPath = path.resolve(workDir || config.project?.path || process.cwd());
 
     logger.info(`📂 扫描目录: ${rootPath}`);
@@ -52,7 +43,6 @@ export async function main(configPath?: string, workDir?: string) {
         path: rootPath,
         gitPath: path.join(rootPath, '.git'),
       };
-      // 将当前目录添加到 repoManager，以便 /repo 命令可以显示
       repoManager.addRepo(selectedRepo);
     } else if (repos.length === 1) {
       selectedRepo = repos[0];
@@ -67,22 +57,19 @@ export async function main(configPath?: string, workDir?: string) {
       logger.info(`📂 当前仓库: ${selectedRepo.name}`);
     }
 
-    registerIMAdapter(IMPlatform.FEISHU, (cfg, repo, manager) => {
-      return new FeishuAdapter(cfg, repo, manager);
+    registerIMAdapter(IMPlatform.TELEGRAM, (cfg, repo, manager) => {
+      return new TelegramAdapter(cfg, repo, manager);
     });
 
     adapter = createIMAdapter(
-      IMPlatform.FEISHU,
+      IMPlatform.TELEGRAM,
       config,
       selectedRepo,
       repoManager
-    ) as FeishuAdapter;
+    ) as TelegramAdapter;
 
-    // 优雅关闭处理
     const shutdown = async (signal: string) => {
       logger.info(`\nReceived ${signal}, shutting down gracefully...`);
-
-      // 移除监听器避免重复触发
       process.removeListener('SIGINT', sigintHandler);
       process.removeListener('SIGTERM', sigtermHandler);
 
@@ -104,25 +91,18 @@ export async function main(configPath?: string, workDir?: string) {
     process.on('SIGINT', sigintHandler);
     process.on('SIGTERM', sigtermHandler);
 
-    // 启动
     logger.info('╔════════════════════════════════════════╗');
-    logger.info('║        Baton Feishu Server             ║');
-    logger.info('║        (WebSocket Long Connection)     ║');
+    logger.info('║        Baton Telegram Server           ║');
     logger.info('╚════════════════════════════════════════╝');
     logger.info(`\nProject: ${config.project.path}`);
-    logger.info(`App ID: ${config.feishu.appId}`);
-    logger.info(`Domain: ${config.feishu.domain || 'feishu'}`);
-    logger.info('\nConnecting to Feishu via WebSocket...\n');
+    logger.info('\nConnecting to Telegram Bot API...\n');
 
     await adapter.start();
 
     logger.info('✅ Connected successfully!');
     logger.info('Press Ctrl+C to exit\n');
 
-    // 保持进程运行（使用 setInterval 而不是 stdin.resume）
     const keepAlive = setInterval(() => {}, 1000);
-
-    // 清理 keepAlive
     process.on('exit', () => {
       clearInterval(keepAlive);
     });

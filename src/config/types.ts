@@ -14,6 +14,8 @@ export interface BatonConfig {
   // 飞书配置（长链接模式）
   feishu?: FeishuConfig;
 
+  telegram?: TelegramConfig;
+
   // ACP 配置
   acp?: ACPConfig;
 }
@@ -31,6 +33,12 @@ export interface FeishuConfig {
     // 权限确认卡片超时时间（秒）
     permissionTimeout: number;
   };
+}
+
+export interface TelegramConfig {
+  botToken: string;
+  apiBase?: string;
+  permissionTimeout?: number;
 }
 
 export interface ACPConfig {

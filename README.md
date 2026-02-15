@@ -3,30 +3,32 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue)](https://www.typescriptlang.org/)
 
-连接 IM 与本地 ACP Agent 的智能代理桥梁。
+Intelligent agent bridge that connects IM channels with local ACP agents.
 
-## 安装
+[中文 README](README.zh-CN.md)
 
-### 一键安装（推荐）
+## Installation
+
+### One-line install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/williamfzc/baton/main/install.sh | bash
 ```
 
-安装脚本默认安装到用户目录：
+Installs to:
 
-- `XDG_BIN_HOME`（若已设置）
-- 否则 `~/.local/bin`
+- `XDG_BIN_HOME` if set
+- otherwise `~/.local/bin`
 
-无需 `sudo`。
+No `sudo` required.
 
-### 手动安装
+### Manual install
 
-从 [Releases](https://github.com/williamfzc/baton/releases) 下载对应平台的二进制文件：
+Download from [Releases](https://github.com/williamfzc/baton/releases):
 
 - `baton-linux-x64`
-- `baton-darwin-x64`（Intel）
-- `baton-darwin-arm64`（Apple Silicon）
+- `baton-darwin-x64` (Intel)
+- `baton-darwin-arm64` (Apple Silicon)
 
 ```bash
 chmod +x baton-*
@@ -34,13 +36,13 @@ mkdir -p ~/.local/bin
 mv baton-* ~/.local/bin/baton
 ```
 
-如果 `~/.local/bin` 不在 PATH 中，加入你的 shell 配置文件（如 `~/.zshrc`）：
+Ensure `~/.local/bin` is in PATH (e.g. `~/.zshrc`):
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 从源码运行
+### Run from source
 
 ```bash
 git clone https://github.com/williamfzc/baton.git
@@ -49,46 +51,43 @@ bun install
 bun run start:feishu
 ```
 
-## 支持的 IM 平台
+## Supported IM Platforms
 
-| 平台            | 状态      | 说明                       |
-| --------------- | --------- | -------------------------- |
-| **飞书 / Lark** | ✅ 已支持 | WebSocket 长链接，内网可用 |
-| **CLI**         | ✅ 已支持 | 本地命令行交互             |
-| **Slack**       | 🔮 计划中 | -                          |
-| **Discord**     | 🔮 计划中 | -                          |
+| Platform     | Status | Notes                     |
+| ------------ | ------ | ------------------------- |
+| **Feishu**   | ✅     | WebSocket long-connection |
+| **Telegram** | ✅     | Bot API long polling      |
+| **CLI**      | ✅     | Local terminal interaction |
+| **Slack**    | 🔮     | Planned                   |
+| **Discord**  | 🔮     | Planned                   |
 
-## 支持的 Executor
+## Supported Executors
 
-Baton 基于 [ACP 协议](https://agentclientprotocol.org/)，目前支持以下 ACP Runtime：
+Baton is based on the [ACP protocol](https://agentclientprotocol.org/) and currently supports:
 
-| Runtime      | 命令              | 说明                                |
-| ------------ | ----------------- | ----------------------------------- |
-| **opencode** | `opencode acp`    | 默认，需全局安装 `opencode` CLI     |
-| **codex**    | `codex-acp`       | 需可执行的 `codex-acp` 命令         |
-| **claude**   | `claude-code-acp` | 需可执行的 `claude-code-acp` 命令   |
+| Runtime      | Command           | Notes                              |
+| ------------ | ----------------- | ---------------------------------- |
+| **opencode** | `opencode acp`    | Default, requires opencode CLI     |
+| **codex**    | `codex-acp`       | Requires `codex-acp` in PATH       |
+| **claude**   | `claude-code-acp` | Requires `claude-code-acp` in PATH |
 
-> ACP 是开放协议，未来将支持更多兼容 ACP 的 Runtime。
-
-### ACP Runtime 安装链接
-
-为避免找不到安装入口，建议直接使用下列官方仓库：
+### ACP Runtime Links
 
 - Codex ACP: https://github.com/zed-industries/codex-acp
 - Claude Code ACP: https://github.com/zed-industries/claude-code-acp
 
-安装完成后请确认命令可用：
+Verify commands:
 
 ```bash
 codex-acp --help
 claude-code-acp --help
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 配置
+### 1. Configure
 
-创建 `baton.config.json`：
+Create `baton.config.json`:
 
 ```json
 {
@@ -101,15 +100,16 @@ claude-code-acp --help
     "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "domain": "feishu"
   },
+  "telegram": {
+    "botToken": "123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
   "acp": {
     "executor": "opencode"
   }
 }
 ```
 
-### 1.1 自定义 ACP 启动命令（可选）
-
-如果你希望 Baton 启动自定义 ACP 进程（例如指定二进制路径或参数），可以在配置里增加 `acp.command`：
+### 1.1 Custom ACP command (optional)
 
 ```json
 {
@@ -125,60 +125,62 @@ claude-code-acp --help
 }
 ```
 
-- `executor`：用于选择默认内置命令（`opencode`/`codex`/`claude-code`）
-- `command` + `args`：填写后会覆盖默认命令
-- `cwd`：ACP 进程工作目录；相对路径基于当前仓库根目录
-- `env`：仅注入给 ACP 子进程的环境变量
+- `executor`: select default command (`opencode` / `codex` / `claude-code`)
+- `command` + `args`: override default command
+- `cwd`: ACP working directory (relative to repo root)
+- `env`: environment variables passed only to ACP child process
 
-也可以直接用环境变量切换 executor：
+Switch executor via env:
 
 ```bash
 export BATON_EXECUTOR=codex
 ```
 
-或使用环境变量（推荐用于敏感信息）：
+Store secrets in env:
 
 ```bash
 export BATON_FEISHU_APP_ID=cli_xxx
 export BATON_FEISHU_APP_SECRET=xxx
+export BATON_TELEGRAM_BOT_TOKEN=123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 2. 启动
+### 2. Start
 
 ```bash
-# 飞书模式
+# Feishu mode
 baton feishu
 
-# CLI 模式
+# Telegram mode
+baton telegram
+
+# CLI mode
 baton cli
 ```
 
-## 使用指令
+## Commands
 
-### 指令列表
-
-| 指令 | 用法 | 说明 |
+| Command | Usage | Description |
 | --- | --- | --- |
-| `/repo` | `/repo` | 列出可用仓库，并进入数字选择交互 |
-| `/repo [序号/名称]` | `/repo 2` 或 `/repo my-repo` | 直接切换到目标仓库 |
-| `/current` | `/current` | 查看当前会话、队列与任务状态 |
-| `/stop` | `/stop` | 停止当前任务 |
-| `/stop [id]` | `/stop 3` | 停止指定任务 |
-| `/stop all` | `/stop all` | 停止当前任务并清空队列 |
-| `/reset` | `/reset` | 重置当前会话（清除上下文） |
-| `/new` | `/new` | `/reset` 的别名 |
-| `/mode` | `/mode` | 打开 Mode 选择（数字交互） |
-| `/mode [name]` | `/mode code` | 直接切换 Agent Mode |
-| `/model` | `/model` | 打开 Model 选择（数字交互） |
-| `/model [name]` | `/model gpt-5` | 直接切换模型 |
-| `/help` | `/help` | 显示帮助信息 |
-| 任意非指令文本 | `帮我修这个 bug` | 作为 Prompt 转发给 ACP Agent |
+| `/repo` | `/repo` | List repos and open selection |
+| `/repo [index/name]` | `/repo 2` or `/repo my-repo` | Switch to target repo |
+| `/current` | `/current` | Show session, queue, task status |
+| `/stop` | `/stop` | Stop current task |
+| `/stop [id]` | `/stop 3` | Stop specific task |
+| `/stop all` | `/stop all` | Stop current task and clear queue |
+| `/reset` | `/reset` | Reset current session |
+| `/new` | `/new` | Alias of `/reset` |
+| `/mode` | `/mode` | Open mode selection |
+| `/mode [name]` | `/mode code` | Switch Agent Mode directly |
+| `/model` | `/model` | Open model selection |
+| `/model [name]` | `/model gpt-5` | Switch model directly |
+| `/help` | `/help` | Show help |
+| Any text | `fix this bug` | Forward prompt to ACP agent |
 
-### 指令使用说明
+### Notes
 
-- 所有以 `/` 开头但不在上表中的内容，也会按普通 Prompt 转发给 Agent。
-- 当系统要求确认权限或选择项时，优先使用数字回复（`1`、`2`...）。
-- 也支持文本回复：`allow` / `deny` / `cancel` / `yes` / `no` / `y` / `n`，或直接输入选项名。
+- Any slash command not in the list is forwarded as a normal prompt.
+- For selections or permissions, prefer numeric replies (`1`, `2`, ...).
+- Text replies also work: `allow` / `deny` / `cancel` / `yes` / `no` / `y` / `n`, or the option name.
 
 ## License
 
