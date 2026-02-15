@@ -36,6 +36,7 @@ export interface CardAction {
 export enum IMPlatform {
   CLI = 'cli',
   FEISHU = 'feishu',
+  TELEGRAM = 'telegram',
   SLACK = 'slack',
   DISCORD = 'discord',
 }

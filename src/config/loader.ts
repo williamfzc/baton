@@ -74,6 +74,18 @@ function loadEnvConfig(): Partial<BatonConfig> {
     console.log('[Config] Loaded Feishu credentials from environment variables');
   }
 
+  const telegramToken = process.env.BATON_TELEGRAM_BOT_TOKEN;
+  const telegramApiBase = process.env.BATON_TELEGRAM_API_BASE;
+
+  if (telegramToken || telegramApiBase) {
+    envConfig.telegram = {
+      botToken: telegramToken || '',
+      apiBase: telegramApiBase || undefined,
+    };
+
+    console.log('[Config] Loaded Telegram credentials from environment variables');
+  }
+
   // 从环境变量读取项目路径
   const projectPath = process.env.BATON_PROJECT_PATH;
   if (projectPath) {
@@ -114,6 +126,7 @@ function mergeConfigs(
       name: envConfig.project?.name || fileConfig.project?.name || DEFAULT_CONFIG.project!.name,
     },
     feishu: envConfig.feishu || fileConfig.feishu,
+    telegram: envConfig.telegram || fileConfig.telegram,
     acp: {
       command: envConfig.acp?.command || fileConfig.acp?.command,
       args: envConfig.acp?.args || fileConfig.acp?.args,
