@@ -11,6 +11,7 @@ import { SessionManager } from '../core/session';
 import { TaskQueueEngine } from '../core/queue';
 import { BaseIMAdapter, IMPlatform, type IMMessageFormat, type IMReplyOptions } from './adapter';
 import { createLogger } from '../utils/logger';
+import { t } from '../i18n';
 
 const logger = createLogger('CLIAdapter');
 
@@ -48,12 +49,9 @@ export class CLIAdapter extends BaseIMAdapter {
   }
 
   async start(): Promise<void> {
-    console.log('╔════════════════════════════════════════╗');
-    console.log('║           Baton CLI v0.1.0             ║');
-    console.log('║     ChatOps for Local Development      ║');
-    console.log('╚════════════════════════════════════════╝');
-    console.log(`\nProject: ${this.projectPath}\n`);
-    console.log('Type your message (or command), or "quit" to exit:\n');
+    console.log(t('cli', 'adapterBanner'));
+    console.log(`\n${t('cli', 'projectLabel')}${this.projectPath}\n`);
+    console.log(t('cli', 'inputHint'));
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -80,7 +78,7 @@ export class CLIAdapter extends BaseIMAdapter {
       const text = (await this.rl.question('> ')).trim();
 
       if (text.toLowerCase() === 'quit' || text.toLowerCase() === 'exit') {
-        console.log('\n👋 Goodbye!');
+        console.log(`\n${t('cli', 'goodbye')}`);
         await this.stop();
         process.exit(0);
       }
@@ -119,7 +117,7 @@ export class CLIAdapter extends BaseIMAdapter {
           await this.waitForTaskCompletion(mockUserId);
         }
       } catch (error) {
-        console.error('❌ Error:', error);
+        console.error(t('cli', 'errorPrefix'), error);
       }
     }
   }
@@ -143,13 +141,13 @@ export class CLIAdapter extends BaseIMAdapter {
     response: IMResponse,
     isAgentResponse: boolean = false
   ): Promise<void> {
-    const prefix = isAgentResponse ? '🤖 Agent:' : '📨 Response:';
+    const prefix = isAgentResponse ? t('cli', 'agentPrefix') : t('cli', 'responseLabel');
 
     console.log('─'.repeat(50));
     console.log(prefix);
     console.log(response.message);
     if (response.data) {
-      console.log('\n📊 Data:', JSON.stringify(response.data, null, 2));
+      console.log(`\n${t('cli', 'dataLabel')}`, JSON.stringify(response.data, null, 2));
     }
     console.log('─'.repeat(50));
     console.log();

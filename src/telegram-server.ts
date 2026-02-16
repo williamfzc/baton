@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { loadConfig } from './config/loader';
 import { RepoManager } from './core/repo';
 import { createLogger } from './utils/logger';
+import { initI18n, resolveLocale, t } from './i18n';
 import type { RepoInfo } from './types';
 import { registerIMAdapter, createIMAdapter } from './im/factory';
 import { IMPlatform } from './im/adapter';
@@ -10,34 +11,35 @@ import { TelegramAdapter } from './im/telegram';
 
 const logger = createLogger('TelegramServer');
 
-export async function main(configPath?: string, workDir?: string) {
+export async function main(configPath?: string, workDir?: string, locale?: string) {
   let adapter: TelegramAdapter | null = null;
 
   try {
     const config = loadConfig(configPath);
+    initI18n({ defaultLocale: resolveLocale(locale ?? config.language) });
 
     if (!config.telegram?.botToken) {
-      logger.error('Error: Telegram configuration is required');
-      logger.error('Please create baton.config.json with telegram settings');
-      logger.error('See baton.config.example.json for reference');
+      logger.error(t('server', 'configMissingTelegram'));
+      logger.error(t('server', 'configCreateHintTelegram'));
+      logger.error(t('server', 'configExampleHint'));
       process.exit(1);
     }
 
     const rootPath = path.resolve(workDir || config.project?.path || process.cwd());
 
-    logger.info(`📂 扫描目录: ${rootPath}`);
+    logger.info(`${t('server', 'scanRootLabel')}${rootPath}`);
 
     const repoManager = new RepoManager();
     let repos: RepoInfo[] = [];
     try {
       repos = await repoManager.scanFromRoot(rootPath);
     } catch (error) {
-      logger.error({ error }, '扫描仓库失败');
+      logger.error({ error }, t('server', 'scanRepoFailed'));
     }
 
     let selectedRepo: RepoInfo | undefined;
     if (repos.length === 0) {
-      logger.warn('⚠️ 未发现任何 Git 仓库，使用当前目录作为工作目录');
+      logger.warn(t('server', 'noRepoFound'));
       selectedRepo = {
         name: path.basename(rootPath),
         path: rootPath,
@@ -46,15 +48,17 @@ export async function main(configPath?: string, workDir?: string) {
       repoManager.addRepo(selectedRepo);
     } else if (repos.length === 1) {
       selectedRepo = repos[0];
-      logger.info(`📂 当前仓库: ${selectedRepo.name}`);
+      logger.info(`${t('server', 'currentRepoLabel')}${selectedRepo.name}`);
     } else {
-      logger.info(`\n📦 发现 ${repos.length} 个 Git 仓库`);
+      logger.info(
+        `\n${t('server', 'multiRepoTitlePrefix')}${repos.length}${t('server', 'multiRepoTitleSuffix')}`
+      );
       repos.forEach((repo, idx) => {
         const relPath = repoManager.listRepos()[idx].path;
         logger.info(`   ${idx}. ${repo.name} (${relPath})`);
       });
       selectedRepo = repos[0];
-      logger.info(`📂 当前仓库: ${selectedRepo.name}`);
+      logger.info(`${t('server', 'currentRepoLabel')}${selectedRepo.name}`);
     }
 
     registerIMAdapter(IMPlatform.TELEGRAM, (cfg, repo, manager) => {
@@ -69,7 +73,9 @@ export async function main(configPath?: string, workDir?: string) {
     ) as TelegramAdapter;
 
     const shutdown = async (signal: string) => {
-      logger.info(`\nReceived ${signal}, shutting down gracefully...`);
+      logger.info(
+        `\n${t('server', 'shutdownReceivedPrefix')}${signal}${t('server', 'shutdownReceivedSuffix')}`
+      );
       process.removeListener('SIGINT', sigintHandler);
       process.removeListener('SIGTERM', sigtermHandler);
 
@@ -77,10 +83,10 @@ export async function main(configPath?: string, workDir?: string) {
         if (adapter) {
           await adapter.stop();
         }
-        logger.info('✅ Gracefully shut down');
+        logger.info(t('server', 'gracefulShutdownSuccess'));
         process.exit(0);
       } catch (error) {
-        logger.error({ error }, 'Error during shutdown');
+        logger.error({ error }, t('server', 'shutdownError'));
         process.exit(1);
       }
     };
@@ -91,23 +97,21 @@ export async function main(configPath?: string, workDir?: string) {
     process.on('SIGINT', sigintHandler);
     process.on('SIGTERM', sigtermHandler);
 
-    logger.info('╔════════════════════════════════════════╗');
-    logger.info('║        Baton Telegram Server           ║');
-    logger.info('╚════════════════════════════════════════╝');
-    logger.info(`\nProject: ${config.project.path}`);
-    logger.info('\nConnecting to Telegram Bot API...\n');
+    logger.info(t('server', 'bannerTelegram'));
+    logger.info(`\n${t('server', 'projectLabel')}${config.project.path}`);
+    logger.info(`\n${t('server', 'connectingTelegram')}\n`);
 
     await adapter.start();
 
-    logger.info('✅ Connected successfully!');
-    logger.info('Press Ctrl+C to exit\n');
+    logger.info(t('server', 'connectedSuccess'));
+    logger.info(`${t('server', 'pressCtrlC')}\n`);
 
     const keepAlive = setInterval(() => {}, 1000);
     process.on('exit', () => {
       clearInterval(keepAlive);
     });
   } catch (error) {
-    logger.error({ error }, 'Failed to start server');
+    logger.error({ error }, t('server', 'failedStart'));
     process.exit(1);
   }
 }

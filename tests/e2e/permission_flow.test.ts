@@ -2,6 +2,7 @@ import { describe, it, beforeEach, expect, mock } from 'bun:test';
 import { SessionManager } from '../../src/core/session';
 import { TaskQueueEngine } from '../../src/core/queue';
 import type { IMResponse, Session } from '../../src/types';
+import { initI18n, t } from '../../src/i18n/index.js';
 
 mock.module('../../src/acp/client', () => {
   return {
@@ -70,6 +71,7 @@ describe('E2E Permission Flow', () => {
 
   beforeEach(() => {
     capturedResponses = [];
+    initI18n({ defaultLocale: 'en', fallbackLocale: 'en' });
     sessionManager = new SessionManager();
     sessionManager.setCurrentRepo({ name: 'test', path: testProjectPath, gitPath: '' });
 
@@ -175,7 +177,7 @@ describe('E2E Permission Flow', () => {
     // 测试无效选项
     const result = await sessionManager.resolveInteraction(session.id, 'invalid-req', '99');
     expect(result.success).toBe(false);
-    expect(result.message).toContain('无效的选项');
+    expect(result.message).toContain(t('core', 'invalidOptionPrefix'));
   });
 
   it('should handle session reset during permission pending', async () => {
@@ -208,7 +210,7 @@ describe('E2E Permission Flow', () => {
   it('should handle non-existent session for permission resolution', async () => {
     const result = await sessionManager.resolveInteraction('non-existent', 'req-id', '0');
     expect(result.success).toBe(false);
-    expect(result.message).toContain('not found');
+    expect(result.message).toContain(t('core', 'sessionNotFound'));
   });
 
   it('should handle non-existent request id', async () => {
@@ -220,7 +222,7 @@ describe('E2E Permission Flow', () => {
 
     const result = await sessionManager.resolveInteraction(session.id, 'non-existent-req', '0');
     expect(result.success).toBe(false);
-    expect(result.message).toContain('not found or expired');
+    expect(result.message).toContain(t('core', 'permissionRequestMissing'));
   });
 
   it('should correctly build session key with context', async () => {

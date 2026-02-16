@@ -4,6 +4,12 @@ import { TaskQueueEngine } from '../../src/core/queue';
 import { CommandDispatcher } from '../../src/core/dispatcher';
 import type { IMMessage, IMResponse, Session } from '../../src/types';
 
+function expectTitleContainsAny(title: string | undefined, candidates: string[]) {
+  expect(title).toBeDefined();
+  const t = title ?? '';
+  expect(candidates.some(c => t.includes(c))).toBe(true);
+}
+
 describe('E2E System Commands', () => {
   let sessionManager: SessionManager;
   let queueEngine: TaskQueueEngine;
@@ -44,7 +50,7 @@ describe('E2E System Commands', () => {
 
     expect(response.success).toBe(true);
     expect(response.card).toBeDefined();
-    expect(response.card?.title).toContain('会话状态');
+    expectTitleContainsAny(response.card?.title, ['会话状态', 'Session Status']);
   });
 
   it('/stop should return card', async () => {
@@ -69,7 +75,7 @@ describe('E2E System Commands', () => {
 
     expect(response.success).toBe(true);
     expect(response.card).toBeDefined();
-    expect(response.card?.title).toContain('停止任务');
+    expectTitleContainsAny(response.card?.title, ['停止任务', 'Stop Task']);
   });
 
   it('/stop all should clear queue', async () => {
@@ -130,7 +136,7 @@ describe('E2E System Commands', () => {
 
     expect(response.success).toBe(true);
     expect(response.card).toBeDefined();
-    expect(response.card?.title).toContain('重置会话');
+    expectTitleContainsAny(response.card?.title, ['重置会话', 'Reset Session']);
 
     const sessionAfter = sessionManager.getSession('reset-user', 'reset-context', testProjectPath);
     expect(sessionAfter).toBeUndefined();
@@ -146,7 +152,7 @@ describe('E2E System Commands', () => {
 
     expect(response.success).toBe(true);
     expect(response.card).toBeDefined();
-    expect(response.card?.title).toContain('指令帮助');
+    expectTitleContainsAny(response.card?.title, ['指令帮助', 'Command Help']);
   });
 
   it('all responses should have card property', async () => {

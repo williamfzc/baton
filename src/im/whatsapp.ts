@@ -8,6 +8,7 @@ import { createLogger } from '../utils/logger';
 import { BaseIMAdapter, IMPlatform, type IMMessageFormat, type IMReplyOptions } from './adapter';
 import type { UniversalCard } from './types';
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
+import { t } from '../i18n';
 
 const logger = createLogger('WhatsAppAdapter');
 
@@ -77,6 +78,8 @@ export class WhatsAppAdapter extends BaseIMAdapter {
   private messageContext: Map<string, { chatId: string; messageId: string }> = new Map();
   private processedMessages: Map<string, number> = new Map();
   private messageTTL = 300000;
+  private lastCleanup = 0;
+  private cleanupInterval = 60000;
 
   constructor(config: BatonConfig, selectedRepo: RepoInfo, repoManager: RepoManager) {
     super();
@@ -225,17 +228,8 @@ export class WhatsAppAdapter extends BaseIMAdapter {
 
     this.updateSessionMessageContext(session.id, userId, message.id);
 
-    let response: IMResponse;
-    const pendingInteraction = this.getPendingInteraction(session.id, text);
-    if (pendingInteraction) {
-      response = await this.sessionManager.resolveInteraction(
-        session.id,
-        pendingInteraction.requestId,
-        pendingInteraction.optionId
-      );
-    } else {
-      response = await this.dispatcher.dispatch(imMessage);
-    }
+    const interactionResponse = await this.sessionManager.tryResolveInteraction(session.id, text);
+    const response: IMResponse = interactionResponse || (await this.dispatcher.dispatch(imMessage));
 
     await this.replyWithResponse(userId, message.id, session.id, response);
   }
@@ -247,7 +241,10 @@ export class WhatsAppAdapter extends BaseIMAdapter {
       return true;
     }
     this.processedMessages.set(messageId, now);
-    this.cleanupProcessedMessages(now);
+    if (now - this.lastCleanup > this.cleanupInterval) {
+      this.cleanupProcessedMessages(now);
+      this.lastCleanup = now;
+    }
     return false;
   }
 
@@ -281,7 +278,7 @@ export class WhatsAppAdapter extends BaseIMAdapter {
   private async handlePermissionRequest(event: PermissionRequestEvent): Promise<void> {
     const { sessionId, request } = event;
     const toolCall = request.toolCall;
-    const toolName = toolCall.title || 'Unknown Action';
+    const toolName = toolCall.title || t('im', 'unknownAction');
     const options = request.options;
     const context = this.messageContext.get(sessionId);
 
@@ -291,12 +288,12 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     }
 
     const session = this.sessionManager.getSessionById(sessionId);
-    const repoPath = session?.repoName || session?.projectPath || 'unknown';
+    const repoPath = session?.repoName || session?.projectPath || t('im', 'unknownRepo');
 
     const text =
       `🔐 ${repoPath}\n\n` +
       `**${String(toolName)}**\n\n` +
-      `请回复序号选择操作：\n\n` +
+      `${t('im', 'selectByNumber')}\n\n` +
       options.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n');
 
     const newMessageId = await this.sendWhatsAppText(context.chatId, context.messageId, text);
@@ -315,36 +312,6 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     const text = response.card ? this.renderCardToText(response.card) : response.message || '';
     const newMessageId = await this.sendWhatsAppText(context.chatId, context.messageId, text);
     this.updateSessionMessageContext(sessionId, context.chatId, newMessageId);
-  }
-
-  private getPendingInteraction(
-    sessionId: string,
-    text: string
-  ): { requestId: string; optionId: string } | null {
-    const session = this.sessionManager.getSessionById(sessionId);
-    if (!session || session.pendingInteractions.size === 0) {
-      return null;
-    }
-
-    const trimmed = text.trim();
-    for (const [requestId, interaction] of session.pendingInteractions) {
-      const index = parseInt(trimmed, 10);
-      if (!isNaN(index)) {
-        const arrayIndex = index - 1;
-        if (arrayIndex >= 0 && arrayIndex < interaction.data.options.length) {
-          return { requestId, optionId: interaction.data.options[arrayIndex].optionId };
-        }
-      }
-
-      const option = interaction.data.options.find(
-        o => o.name.toLowerCase() === trimmed.toLowerCase()
-      );
-      if (option) {
-        return { requestId, optionId: option.optionId };
-      }
-    }
-
-    return null;
   }
 
   private renderMessageText(message: IMMessageFormat): string {
@@ -369,9 +336,7 @@ export class WhatsAppAdapter extends BaseIMAdapter {
       if (element.type === 'markdown' || element.type === 'text') {
         lines.push(element.content);
       } else if (element.type === 'field_group') {
-        lines.push(
-          element.fields.map(field => `${field.title}: ${field.content}`).join('\n')
-        );
+        lines.push(element.fields.map(field => `${field.title}: ${field.content}`).join('\n'));
       } else if (element.type === 'hr') {
         lines.push('─'.repeat(16));
       } else if (element.type === 'picker') {

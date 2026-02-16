@@ -96,6 +96,7 @@ Create `baton.config.json`:
     "path": "/path/to/your/project",
     "name": "my-project"
   },
+  "language": "en",
   "feishu": {
     "appId": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -187,6 +188,9 @@ baton slack
 
 # CLI mode
 baton cli
+
+# Set language
+baton --mode cli --lang zh-CN
 ```
 
 ## Commands

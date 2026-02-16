@@ -7,6 +7,10 @@ import type { IMMessage, IMResponse, ParsedCommand } from '../types';
 import type { UniversalCard } from '../im/types';
 import type { SessionManager } from './session';
 import type { TaskQueueEngine } from './queue';
+import { createLogger } from '../utils/logger';
+import { t } from '../i18n';
+
+const logger = createLogger('Dispatcher');
 
 export class CommandDispatcher {
   private sessionManager: SessionManager;
@@ -58,21 +62,19 @@ export class CommandDispatcher {
       projectPath
     );
 
-    if (session.pendingInteractions.size > 0) {
-      const requestId = Array.from(session.pendingInteractions.keys())[0];
-      const interaction = session.pendingInteractions.get(requestId);
-      const isInteractionReply =
-        command.type === 'prompt' &&
-        !!interaction &&
-        this.matchesInteractionReply(trimmed, interaction.data.options);
-
-      if (isInteractionReply) {
-        return await this.sessionManager.resolveInteraction(session.id, requestId, trimmed);
+    if (session.pendingInteractions.size > 0 && command.type === 'prompt') {
+      const interactionResponse = await this.sessionManager.tryResolveInteraction(
+        session.id,
+        trimmed
+      );
+      if (interactionResponse) {
+        return interactionResponse;
       }
     }
 
-    console.log(
-      `[Dispatcher] ${message.userId}: ${command.type} - ${command.raw.substring(0, 30)}`
+    logger.info(
+      { userId: message.userId, command: command.type, raw: command.raw.substring(0, 30) },
+      'Dispatching message'
     );
 
     switch (command.type) {
@@ -108,8 +110,8 @@ export class CommandDispatcher {
     if (!repoManager) {
       return {
         success: false,
-        message: '仓库管理器未初始化',
-        card: this.createErrorCard('仓库管理器未初始化'),
+        message: t('core', 'repoManagerNotInitialized'),
+        card: this.createErrorCard(t('core', 'repoManagerNotInitialized')),
       };
     }
 
@@ -117,13 +119,13 @@ export class CommandDispatcher {
     if (repos.length === 0) {
       return {
         success: true,
-        message: '未发现任何 Git 仓库',
+        message: t('core', 'repoEmptyMessage'),
         card: {
-          title: '📦 仓库列表',
+          title: t('core', 'repoListTitle'),
           elements: [
             {
               type: 'markdown',
-              content: '未在指定目录下发现任何 Git 仓库',
+              content: t('core', 'repoListEmpty'),
             },
           ],
         },
@@ -141,8 +143,8 @@ export class CommandDispatcher {
     if (!targetRepo) {
       return {
         success: false,
-        message: `未找到仓库: ${identifier}`,
-        card: this.createErrorCard(`未找到仓库: ${identifier}`),
+        message: `${t('core', 'repoNotFoundPrefix')}${identifier}`,
+        card: this.createErrorCard(`${t('core', 'repoNotFoundPrefix')}${identifier}`),
       };
     }
 
@@ -150,17 +152,20 @@ export class CommandDispatcher {
     if (currentRepo && currentRepo.path === targetRepo.path) {
       return {
         success: true,
-        message: `当前已在仓库: ${targetRepo.name}`,
+        message: `${t('core', 'repoAlreadyCurrentPrefix')}${targetRepo.name}`,
         card: {
-          title: '📦 仓库切换',
+          title: t('core', 'repoSwitchTitle'),
           elements: [
             {
               type: 'markdown',
-              content: `ℹ️ 当前已在仓库：**${targetRepo.name}**`,
+              content: `${t('core', 'repoAlreadyCurrentCardPrefix')}${targetRepo.name}${t(
+                'core',
+                'repoAlreadyCurrentCardSuffix'
+              )}`,
             },
             {
               type: 'markdown',
-              content: `📂 路径: \`${targetRepo.path}\``,
+              content: `${t('core', 'repoPathLabel')}\`${targetRepo.path}\``,
             },
           ],
         },
@@ -171,22 +176,25 @@ export class CommandDispatcher {
 
     return {
       success: true,
-      message: `🔄 已切换到仓库: ${targetRepo.name}`,
+      message: `${t('core', 'repoSwitchedPrefix')}${targetRepo.name}`,
       data: { repo: { name: targetRepo.name, path: targetRepo.path } },
       card: {
-        title: '📦 仓库切换成功',
+        title: t('core', 'repoSwitchSuccessTitle'),
         elements: [
           {
             type: 'markdown',
-            content: `✅ 已切换到仓库：**${targetRepo.name}**`,
+            content: `${t('core', 'repoSwitchSuccessCardPrefix')}${targetRepo.name}${t(
+              'core',
+              'repoSwitchSuccessCardSuffix'
+            )}`,
           },
           {
             type: 'markdown',
-            content: `📂 路径: \`${targetRepo.path}\``,
+            content: `${t('core', 'repoPathLabel')}\`${targetRepo.path}\``,
           },
           {
             type: 'markdown',
-            content: '💡 新的会话将在下次发送消息时自动创建',
+            content: t('core', 'repoSwitchSessionHint'),
           },
         ],
       },
@@ -196,7 +204,7 @@ export class CommandDispatcher {
   // 辅助方法：创建错误卡片
   private createErrorCard(message: string): UniversalCard {
     return {
-      title: '❌ 操作失败',
+      title: t('core', 'errorCardTitle'),
       elements: [
         {
           type: 'markdown',
@@ -236,11 +244,14 @@ export class CommandDispatcher {
           ...result,
           card: result.success
             ? {
-                title: '🎨 模式切换',
+                title: t('core', 'modeSwitchTitle'),
                 elements: [
                   {
                     type: 'markdown' as const,
-                    content: `✅ **模式已切换为：** \`${mode}\``,
+                    content: `${t('core', 'modeSwitchedPrefix')}${mode}${t(
+                      'core',
+                      'modeSwitchedSuffix'
+                    )}`,
                   },
                 ],
               }
@@ -249,8 +260,8 @@ export class CommandDispatcher {
       }
       return {
         success: false,
-        message: 'Agent 未启动',
-        card: this.createErrorCard('Agent 未启动'),
+        message: t('core', 'agentNotStarted'),
+        card: this.createErrorCard(t('core', 'agentNotStarted')),
       };
     }
     // 触发选择界面
@@ -274,11 +285,14 @@ export class CommandDispatcher {
           ...result,
           card: result.success
             ? {
-                title: '🤖 模型切换',
+                title: t('core', 'modelSwitchTitle'),
                 elements: [
                   {
                     type: 'markdown' as const,
-                    content: `✅ **模型已切换为：** \`${model}\``,
+                    content: `${t('core', 'modelSwitchedPrefix')}${model}${t(
+                      'core',
+                      'modelSwitchedSuffix'
+                    )}`,
                   },
                 ],
               }
@@ -287,8 +301,8 @@ export class CommandDispatcher {
       }
       return {
         success: false,
-        message: 'Agent 未启动',
-        card: this.createErrorCard('Agent 未启动'),
+        message: t('core', 'agentNotStarted'),
+        card: this.createErrorCard(t('core', 'agentNotStarted')),
       };
     }
     // 触发选择界面
@@ -297,55 +311,44 @@ export class CommandDispatcher {
 
   private handleHelp(): IMResponse {
     const helpCard: UniversalCard = {
-      title: '📚 Baton 指令帮助',
+      title: t('core', 'helpCardTitle'),
       elements: [
         {
           type: 'markdown',
-          content: '**🔧 系统指令**',
+          content: t('core', 'helpSystemTitle'),
         },
         {
           type: 'markdown',
-          content: `
-• \`/repo [序号/名称]\` - 查看或切换仓库
-• \`/current\` - 查看当前会话状态
-• \`/stop [id/all]\` - 停止当前任务或清空队列
-• \`/reset\` / \`/new\` - 重置会话（清除上下文）
-• \`/mode [name]\` - 查看或切换 Agent 模式
-• \`/model [name]\` - 查看或切换 AI 模型
-• \`/help\` - 显示此帮助
-          `.trim(),
+          content: t('core', 'helpSystemList'),
         },
         {
           type: 'hr',
         },
         {
           type: 'markdown',
-          content: '**💬 Agent 交互**',
+          content: t('core', 'helpAgentTitle'),
         },
         {
           type: 'markdown',
-          content: `
-• 发送任意文本即可与 AI Agent 对话
-• 所有非指令文本都会转发给 Agent
-          `.trim(),
+          content: t('core', 'helpAgentList'),
         },
         {
           type: 'hr',
         },
         {
           type: 'markdown',
-          content: '**⚡ 权限说明**',
+          content: t('core', 'helpPermissionTitle'),
         },
         {
           type: 'markdown',
-          content: '敏感操作需用户确认，请使用数字序号回复或 IM 卡片进行交互',
+          content: t('core', 'helpPermissionDesc'),
         },
       ],
     };
 
     return {
       success: true,
-      message: 'Baton 指令帮助已发送',
+      message: t('core', 'helpMessageSent'),
       card: helpCard,
     };
   }
@@ -363,20 +366,5 @@ export class CommandDispatcher {
     const result = await this.queueEngine.enqueue(session, command.raw, 'prompt');
 
     return result;
-  }
-
-  private matchesInteractionReply(
-    input: string,
-    options: Array<{ optionId: string; name: string }>
-  ): boolean {
-    const normalized = input.trim().toLowerCase();
-    if (!normalized) return false;
-    if (/^\d+$/.test(normalized)) return true;
-    if (['allow', 'deny', 'cancel', 'yes', 'no', 'y', 'n'].includes(normalized)) return true;
-
-    return options.some(
-      opt =>
-        opt.optionId.toLowerCase() === normalized || opt.name.trim().toLowerCase() === normalized
-    );
   }
 }

@@ -9,24 +9,24 @@ import { ACPClient, type ACPLaunchConfig } from '../acp/client';
 import { createLogger } from '../utils/logger';
 import { EventEmitter } from 'node:events';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { RequestPermissionRequest, PermissionOption } from '@agentclientprotocol/sdk';
 import { RepoManager } from './repo';
+import { t } from '../i18n';
 
 const logger = createLogger('SessionManager');
 const REPO_OPTION_PREFIX = 'repo:';
 
 // 简单的 UUID 生成函数
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return randomUUID();
 }
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Session>();
+  private sessionsById = new Map<string, Session>();
   private conversationCursors = new Map<string, string>();
+  private pendingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
   private permissionTimeout: number;
   private repoManager: RepoManager | null = null;
   private defaultRepoInfo: RepoInfo | null = null;
@@ -125,6 +125,7 @@ export class SessionManager extends EventEmitter {
         pendingInteractions: new Map(),
       };
       this.sessions.set(sessionKey, session);
+      this.sessionsById.set(session.id, session);
       logger.info(`[Session] Created new session for user ${userId} in ${projectPath}`);
     }
 
@@ -142,6 +143,7 @@ export class SessionManager extends EventEmitter {
           // 每个会话最多一个 pending interaction，避免多交互串扰
           if (session.pendingInteractions.size > 0) {
             for (const [existingId, existing] of session.pendingInteractions.entries()) {
+              this.clearPendingTimeout(existingId);
               existing.reject('replaced by new interaction');
               session.pendingInteractions.delete(existingId);
             }
@@ -153,7 +155,7 @@ export class SessionManager extends EventEmitter {
             reject,
             timestamp: Date.now(),
             data: {
-              title: req.toolCall.title ?? '权限请求',
+              title: req.toolCall.title ?? t('core', 'permissionRequestTitle'),
               options: req.options.map(o => ({ optionId: o.optionId, name: o.name })),
               originalRequest: req,
             },
@@ -174,7 +176,7 @@ export class SessionManager extends EventEmitter {
           });
 
           // 设置超时自动拒绝
-          setTimeout(() => {
+          const timeout = setTimeout(() => {
             if (session.pendingInteractions.has(requestId)) {
               const pending = session.pendingInteractions.get(requestId);
               const fallbackOption =
@@ -189,7 +191,9 @@ export class SessionManager extends EventEmitter {
               session.state = session.queue.current ? 'RUNNING' : 'IDLE';
               logger.warn({ sessionId: session.id, requestId }, 'Permission request timed out');
             }
+            this.pendingTimeouts.delete(requestId);
           }, this.permissionTimeout);
+          this.pendingTimeouts.set(requestId, timeout);
         });
       };
 
@@ -214,26 +218,79 @@ export class SessionManager extends EventEmitter {
     return session;
   }
 
+  private clearPendingTimeout(requestId: string): void {
+    const timeout = this.pendingTimeouts.get(requestId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.pendingTimeouts.delete(requestId);
+    }
+  }
+
+  private normalizeInteractionOption(
+    options: Array<{ optionId: string; name: string }>,
+    input: string
+  ): { optionId: string } | null {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+
+    const index = parseInt(trimmed, 10);
+    if (!isNaN(index)) {
+      if (index >= 0 && index < options.length) {
+        return { optionId: options[index].optionId };
+      }
+      const oneBasedIndex = index - 1;
+      if (oneBasedIndex >= 0 && oneBasedIndex < options.length) {
+        return { optionId: options[oneBasedIndex].optionId };
+      }
+      return null;
+    }
+
+    const normalized = trimmed.toLowerCase();
+    const matchedById = options.find(o => o.optionId.toLowerCase() === normalized);
+    if (matchedById) {
+      return { optionId: matchedById.optionId };
+    }
+    const matchedByName = options.find(o => o.name.trim().toLowerCase() === normalized);
+    if (matchedByName) {
+      return { optionId: matchedByName.optionId };
+    }
+
+    return null;
+  }
+
+  async tryResolveInteraction(sessionId: string, input: string): Promise<IMResponse | null> {
+    const session = this.sessionsById.get(sessionId);
+    if (!session || session.pendingInteractions.size === 0) {
+      return null;
+    }
+
+    for (const [requestId, interaction] of session.pendingInteractions) {
+      const normalized = this.normalizeInteractionOption(interaction.data.options, input);
+      if (normalized) {
+        return await this.resolveInteraction(sessionId, requestId, normalized.optionId);
+      }
+    }
+
+    return null;
+  }
+
   // 处理权限确认结果
   async resolveInteraction(
     sessionId: string,
     requestId: string,
     optionIdOrIndex: string
   ): Promise<IMResponse> {
-    // 查找 session
-    let session: Session | undefined;
-    for (const s of this.sessions.values()) {
-      if (s.id === sessionId) {
-        session = s;
-        break;
-      }
-    }
+    const session = this.sessionsById.get(sessionId);
 
     if (!session) {
       return {
         success: false,
-        message: 'Session not found',
-        card: this.createStatusCard('交互处理', '会话不存在', false),
+        message: t('core', 'sessionNotFound'),
+        card: this.createStatusCard(
+          t('core', 'interactionTitle'),
+          t('core', 'sessionMissing'),
+          false
+        ),
       };
     }
 
@@ -241,49 +298,35 @@ export class SessionManager extends EventEmitter {
     if (!pending) {
       return {
         success: false,
-        message: 'Permission request not found or expired',
-        card: this.createStatusCard('交互处理', '请求不存在或已过期', false),
+        message: t('core', 'permissionRequestMissing'),
+        card: this.createStatusCard(
+          t('core', 'interactionTitle'),
+          t('core', 'permissionRequestExpired'),
+          false
+        ),
       };
     }
 
-    let finalOptionId = optionIdOrIndex;
     const options = pending.data.options;
-
-    // 检查是否是数字输入：
-    // 兼容历史行为（0-based）与当前交互习惯（1-based）
-    const index = parseInt(optionIdOrIndex, 10);
-    if (!isNaN(index)) {
-      if (index >= 0 && index < options.length) {
-        // 兼容历史测试/行为：输入 0..N-1 直接按数组下标处理
-        finalOptionId = options[index].optionId;
-      } else {
-        const oneBasedIndex = index - 1;
-        if (oneBasedIndex >= 0 && oneBasedIndex < options.length) {
-          finalOptionId = options[oneBasedIndex].optionId;
-        } else {
-          return {
-            success: false,
-            message: `无效的选项: ${optionIdOrIndex}。可选: ${options.map(o => o.optionId).join(', ')} 或序号 1-${options.length}`,
-            card: this.createStatusCard('交互处理', `无效的选项: ${optionIdOrIndex}`, false),
-          };
-        }
-      }
-    } else {
-      const normalizedInput = optionIdOrIndex.trim().toLowerCase();
-      const matchedById = options.find(o => o.optionId.toLowerCase() === normalizedInput);
-      const matchedByName = options.find(o => o.name.trim().toLowerCase() === normalizedInput);
-      if (matchedById) {
-        finalOptionId = matchedById.optionId;
-      } else if (matchedByName) {
-        finalOptionId = matchedByName.optionId;
-      } else {
-        return {
-          success: false,
-          message: `无效的选项: ${optionIdOrIndex}。可选: ${options.map(o => o.optionId).join(', ')} 或序号 1-${options.length}`,
-          card: this.createStatusCard('交互处理', `无效的选项: ${optionIdOrIndex}`, false),
-        };
-      }
+    const normalized = this.normalizeInteractionOption(options, optionIdOrIndex);
+    if (!normalized) {
+      return {
+        success: false,
+        message: `${t('core', 'invalidOptionPrefix')}${optionIdOrIndex}${t(
+          'core',
+          'invalidOptionOptionsPrefix'
+        )}${options.map(o => o.optionId).join(', ')}${t(
+          'core',
+          'invalidOptionOptionsSuffix'
+        )}${options.length}`,
+        card: this.createStatusCard(
+          t('core', 'interactionTitle'),
+          `${t('core', 'invalidOptionPrefix')}${optionIdOrIndex}`,
+          false
+        ),
+      };
     }
+    const finalOptionId = normalized.optionId;
 
     // 对于 repo_selection 类型，通过 Promise 回调返回结果，这里只负责触发回调
     if (pending.type === 'repo_selection') {
@@ -295,6 +338,7 @@ export class SessionManager extends EventEmitter {
         const targetRepo = repoManager.findRepo(repoIdentifier);
         if (targetRepo) {
           this.switchConversationRepo(session.userId, session.contextId, targetRepo);
+          this.clearPendingTimeout(requestId);
           pending.resolve(finalOptionId);
           session.pendingInteractions.delete(requestId);
           session.state = session.queue.current ? 'RUNNING' : 'IDLE';
@@ -305,38 +349,47 @@ export class SessionManager extends EventEmitter {
           // 返回切换成功卡片（Promise 返回空响应）
           return {
             success: true,
-            message: `🔄 已切换到仓库: ${targetRepo.name}`,
+            message: `${t('core', 'repoSwitchedPrefix')}${targetRepo.name}`,
             card: {
-              title: '📦 仓库切换成功',
+              title: t('core', 'repoSwitchSuccessTitle'),
               elements: [
                 {
                   type: 'markdown',
-                  content: `✅ 已切换到仓库：**${targetRepo.name}**`,
+                  content: `${t('core', 'repoSwitchSuccessCardPrefix')}${targetRepo.name}${t(
+                    'core',
+                    'repoSwitchSuccessCardSuffix'
+                  )}`,
                 },
                 {
                   type: 'markdown',
-                  content: `📂 路径: \`${targetRepo.path}\``,
+                  content: `${t('core', 'repoPathLabel')}\`${targetRepo.path}\``,
                 },
                 {
                   type: 'markdown',
-                  content: '💡 新的会话将在下次发送消息时自动创建',
+                  content: t('core', 'repoSwitchSessionHint'),
                 },
               ],
             },
           };
         }
       }
+      this.clearPendingTimeout(requestId);
       pending.resolve(finalOptionId);
       session.pendingInteractions.delete(requestId);
       session.state = session.queue.current ? 'RUNNING' : 'IDLE';
       return {
         success: false,
-        message: `未找到仓库: ${finalOptionId}`,
-        card: this.createStatusCard('仓库切换', `未找到仓库: ${finalOptionId}`, false),
+        message: `${t('core', 'repoNotFoundPrefix')}${finalOptionId}`,
+        card: this.createStatusCard(
+          t('core', 'repoSwitchTitle'),
+          `${t('core', 'repoNotFoundPrefix')}${finalOptionId}`,
+          false
+        ),
       };
     }
 
     // 其他类型：执行回调并返回通用确认卡片
+    this.clearPendingTimeout(requestId);
     pending.resolve(finalOptionId);
     session.pendingInteractions.delete(requestId);
     session.state = session.queue.current ? 'RUNNING' : 'IDLE';
@@ -344,8 +397,11 @@ export class SessionManager extends EventEmitter {
     logger.info({ sessionId, requestId, finalOptionId }, 'Interaction resolved by user');
     return {
       success: true,
-      message: `已选择选项: ${finalOptionId}`,
-      card: this.createStatusCard('交互处理', `已选择选项: ${finalOptionId}`),
+      message: `${t('core', 'selectedOptionPrefix')}${finalOptionId}`,
+      card: this.createStatusCard(
+        t('core', 'interactionTitle'),
+        `${t('core', 'selectedOptionPrefix')}${finalOptionId}`
+      ),
     };
   }
 
@@ -355,12 +411,6 @@ export class SessionManager extends EventEmitter {
     contextId: string | undefined,
     repos: { index: number; name: string; path: string }[]
   ): Promise<IMResponse> {
-    // DEBUG: 打印 repos 内容
-    console.log(
-      '[DEBUG] createRepoSelection repos:',
-      repos.map(r => ({ index: r.index, name: r.name, path: r.path }))
-    );
-
     const projectPath = this.resolveProjectPath(userId, contextId);
     const session = await this.getOrCreateSession(userId, contextId, projectPath);
 
@@ -368,8 +418,12 @@ export class SessionManager extends EventEmitter {
     if (session.pendingInteractions.size > 0) {
       return {
         success: false,
-        message: '当前有待处理的选择，请先完成后再试',
-        card: this.createStatusCard('仓库选择', '当前有待处理的选择，请先完成后再试', false),
+        message: t('core', 'repoSelectionPending'),
+        card: this.createStatusCard(
+          t('core', 'repoSelectionTitle'),
+          t('core', 'repoSelectionPending'),
+          false
+        ),
       };
     }
 
@@ -377,15 +431,18 @@ export class SessionManager extends EventEmitter {
     const currentRepo = this.getConversationRepo(userId, contextId);
     const listCard: IMResponse = {
       success: true,
-      message: '请选择仓库',
+      message: t('core', 'repoSelectPrompt'),
       card: {
-        title: '📦 选择仓库',
+        title: t('core', 'repoSelectCardTitle'),
         elements: [
           ...(currentRepo
             ? [
                 {
                   type: 'markdown' as const,
-                  content: `📂 当前仓库：**${currentRepo.name}**\n`,
+                  content: `${t('core', 'repoSelectCurrentPrefix')}${currentRepo.name}${t(
+                    'core',
+                    'repoSelectCurrentSuffix'
+                  )}`,
                 },
                 {
                   type: 'hr' as const,
@@ -394,7 +451,7 @@ export class SessionManager extends EventEmitter {
             : []),
           {
             type: 'markdown' as const,
-            content: '请回复序号选择仓库：',
+            content: t('core', 'repoSelectInstruction'),
           },
           {
             type: 'markdown' as const,
@@ -402,7 +459,7 @@ export class SessionManager extends EventEmitter {
           },
           {
             type: 'markdown' as const,
-            content: '\n💡 直接回复序号或仓库名称即可',
+            content: t('core', 'repoSelectHint'),
           },
         ],
       },
@@ -424,12 +481,16 @@ export class SessionManager extends EventEmitter {
         reject: () =>
           resolve({
             success: false,
-            message: '已取消',
-            card: this.createStatusCard('仓库选择', '已取消', false),
+            message: t('core', 'cancelled'),
+            card: this.createStatusCard(
+              t('core', 'repoSelectionTitle'),
+              t('core', 'cancelled'),
+              false
+            ),
           }),
         timestamp: Date.now(),
         data: {
-          title: '选择仓库',
+          title: t('core', 'repoSelectTitle'),
           options: repos.map(r => ({ optionId: `${REPO_OPTION_PREFIX}${r.index}`, name: r.name })),
         },
       });
@@ -449,12 +510,7 @@ export class SessionManager extends EventEmitter {
   }
 
   getSessionById(sessionId: string): Session | undefined {
-    for (const session of this.sessions.values()) {
-      if (session.id === sessionId) {
-        return session;
-      }
-    }
-    return undefined;
+    return this.sessionsById.get(sessionId);
   }
 
   async resetSession(userId: string, contextId: string | undefined): Promise<IMResponse> {
@@ -465,8 +521,11 @@ export class SessionManager extends EventEmitter {
     if (!session) {
       return {
         success: true,
-        message: '🔄 会话重置完成（无活跃会话）',
-        card: this.createStatusCard('重置会话', '会话重置完成（无活跃会话）'),
+        message: t('core', 'resetNoSessionMessage'),
+        card: this.createStatusCard(
+          t('core', 'resetSessionTitle'),
+          t('core', 'resetNoSessionCardMessage')
+        ),
       };
     }
 
@@ -495,6 +554,7 @@ export class SessionManager extends EventEmitter {
     // 3. 清理所有待处理交互
     const pendingCount = session.pendingInteractions.size;
     for (const [requestId, interaction] of session.pendingInteractions) {
+      this.clearPendingTimeout(requestId);
       interaction.reject('Session reset');
       session.pendingInteractions.delete(requestId);
     }
@@ -508,51 +568,67 @@ export class SessionManager extends EventEmitter {
 
     // 5. 删除会话
     this.sessions.delete(sessionKey);
+    this.sessionsById.delete(session.id);
 
     logger.info({ userId, contextId, repoName, wasRunning, pid }, 'Session reset complete');
 
     const elements: { type: 'markdown'; content: string }[] = [
       {
         type: 'markdown',
-        content: `✅ **会话已完全重置**`,
+        content: t('core', 'resetCompleteLabel'),
       },
       {
         type: 'markdown',
-        content: `📁 **项目：** \`${repoName}\``,
+        content: `${t('core', 'resetProjectLabel')}\`${repoName}\``,
       },
     ];
 
     if (wasRunning && pid) {
       elements.push({
         type: 'markdown',
-        content: `🤖 **Agent：** 已终止 (PID: \`${pid}\`)`,
+        content: `${t('core', 'resetAgentStoppedPrefix')}\`${pid}\`${t(
+          'core',
+          'resetAgentStoppedSuffix'
+        )}`,
       });
     }
 
     if (pendingCount > 0) {
       elements.push({
         type: 'markdown',
-        content: `🔓 **清理交互：** ${pendingCount} 个待处理请求已取消`,
+        content: `${t('core', 'resetInteractionsClearedPrefix')}${pendingCount}${t(
+          'core',
+          'resetInteractionsClearedSuffix'
+        )}`,
       });
     }
 
     if (queueCount > 0) {
       elements.push({
         type: 'markdown',
-        content: `📬 **清空队列：** ${queueCount} 个待执行任务`,
+        content: `${t('core', 'resetQueueClearedPrefix')}${queueCount}${t(
+          'core',
+          'resetQueueClearedSuffix'
+        )}`,
       });
     }
 
     elements.push({
       type: 'markdown',
-      content: `\n💡 下次发送消息时将自动创建新的会话`,
+      content: t('core', 'resetNextSessionHint'),
     });
 
     return {
       success: true,
-      message: `✅ 会话重置完成：${repoName}。Agent 已终止，${queueCount} 个任务已清理，${pendingCount} 个交互已取消。`,
+      message: `${t('core', 'resetMessagePrefix')}${repoName}${t(
+        'core',
+        'resetMessageMid'
+      )}${queueCount}${t('core', 'resetMessageQueueSuffix')}${pendingCount}${t(
+        'core',
+        'resetMessagePendingSuffix'
+      )}`,
       card: {
-        title: `🔄 重置会话 - ${repoName}`,
+        title: `${t('core', 'resetCardTitlePrefix')}${repoName}`,
         elements,
       },
     };
@@ -564,8 +640,11 @@ export class SessionManager extends EventEmitter {
     if (!session) {
       return {
         success: true,
-        message: '当前没有活跃的会话',
-        card: this.createStatusCard('会话状态', '当前没有活跃的会话'),
+        message: t('core', 'noActiveSessionMessage'),
+        card: this.createStatusCard(
+          t('core', 'sessionStatusTitle'),
+          t('core', 'noActiveSessionMessage')
+        ),
       };
     }
 
@@ -583,7 +662,7 @@ export class SessionManager extends EventEmitter {
 
     // 构建状态信息
     const statusIcon = running ? '🟢' : '🔴';
-    const statusText = running ? '运行中' : '已停止';
+    const statusText = running ? t('core', 'statusRunning') : t('core', 'statusStopped');
     const repoName = session.repoName || path.basename(session.projectPath);
     const waitingCount = session.pendingInteractions.size;
     const planStatus =
@@ -595,19 +674,27 @@ export class SessionManager extends EventEmitter {
     const elements: { type: 'markdown'; content: string }[] = [
       {
         type: 'markdown' as const,
-        content: `**📁 项目：** \`${repoName}\`\n**📂 路径：** \`${session.projectPath}\``,
+        content: `${t('core', 'statusCardProjectLabel')}\`${repoName}\`\n${t(
+          'core',
+          'statusCardPathLabel'
+        )}\`${session.projectPath}\``,
       },
       {
         type: 'markdown' as const,
-        content: `**⚙️ Executor：** \`${this.executor}\``,
+        content: `${t('core', 'statusCardExecutorLabel')}\`${this.executor}\``,
       },
       {
         type: 'markdown' as const,
-        content: `**🤖 Agent：** ${statusIcon} ${statusText}${pid ? ` | PID: \`${pid}\`` : ''}`,
+        content: `${t('core', 'statusCardAgentLabel')}${statusIcon} ${statusText}${
+          pid ? ` | ${t('core', 'statusCardPidLabel')}\`${pid}\`` : ''
+        }`,
       },
       {
         type: 'markdown' as const,
-        content: `**🧭 会话状态：** \`${session.state}\` | **⏳ 待确认交互：** ${waitingCount}`,
+        content: `${t('core', 'statusCardSessionLabel')}\`${session.state}\` | ${t(
+          'core',
+          'statusCardPendingLabel'
+        )}${waitingCount}`,
       },
     ];
 
@@ -645,16 +732,18 @@ export class SessionManager extends EventEmitter {
         )
         .join('\n');
       const currentStep = planStatus.current?.content
-        ? `\n**🧩 当前步骤：** ${planStatus.current.content.substring(0, 100)}${planStatus.current.content.length > 100 ? '...' : ''}`
+        ? `\n${t('core', 'statusCardCurrentStepLabel')}${planStatus.current.content.substring(0, 100)}${
+            planStatus.current.content.length > 100 ? '...' : ''
+          }`
         : '';
       elements.push({
         type: 'markdown' as const,
-        content: `**🗺️ Agent 计划：** ${planStatus.summary}\n${planList}${currentStep}`,
+        content: `${t('core', 'statusCardPlanLabel')}${planStatus.summary}\n${planList}${currentStep}`,
       });
     } else {
       elements.push({
         type: 'markdown' as const,
-        content: '**🗺️ Agent 计划：** 暂无计划信息',
+        content: `${t('core', 'statusCardPlanLabel')}${t('core', 'statusCardPlanEmpty')}`,
       });
     }
 
@@ -662,12 +751,18 @@ export class SessionManager extends EventEmitter {
     if (session.queue.current) {
       elements.push({
         type: 'markdown' as const,
-        content: `**📋 当前任务：**\n\`\`\`\n${session.queue.current.content.substring(0, 100)}${session.queue.current.content.length > 100 ? '...' : ''}\n\`\`\`\n🆔 \`${session.queue.current.id.substring(0, 8)}...\``,
+        content: `${t('core', 'statusCardCurrentTaskLabel')}\n\`\`\`\n${session.queue.current.content.substring(
+          0,
+          100
+        )}${session.queue.current.content.length > 100 ? '...' : ''}\n\`\`\`\n${t(
+          'core',
+          'statusCardTaskIdLabel'
+        )}\`${session.queue.current.id.substring(0, 8)}...\``,
       });
     } else {
       elements.push({
         type: 'markdown' as const,
-        content: `**📋 当前任务：** 🕐 空闲`,
+        content: `${t('core', 'statusCardCurrentTaskLabel')} ${t('core', 'statusCardCurrentTaskIdle')}`,
       });
     }
 
@@ -682,23 +777,34 @@ export class SessionManager extends EventEmitter {
       type: 'markdown' as const,
       content:
         session.queue.pending.length > 0
-          ? `**📬 待执行队列 (${session.queue.pending.length} 个)：**\n${queueList}`
-          : '**📬 待执行队列 (0 个)：**\n1. `(空)`',
+          ? `${t('core', 'statusCardQueuePrefix')}${session.queue.pending.length}${t(
+              'core',
+              'statusCardQueueSuffix'
+            )}\n${queueList}`
+          : `${t('core', 'statusCardQueuePrefix')}0${t(
+              'core',
+              'statusCardQueueSuffix'
+            )}\n${t('core', 'statusCardQueueEmptyItem')}`,
     });
 
     const card: UniversalCard = {
-      title: `📊 会话状态 - ${repoName}`,
+      title: `${t('core', 'statusCardTitlePrefix')}${repoName}`,
       elements: elements,
     };
 
     // 构建文本消息（兼容非卡片客户端）
-    let messageText = `📁 项目: ${repoName}\n`;
-    messageText += `📂 路径: ${session.projectPath}\n`;
-    messageText += `⚙️ Executor: ${this.executor}\n`;
-    messageText += `🤖 Agent: ${statusText}${pid ? ` (PID: ${pid})` : ''}\n`;
-    messageText += `🧭 会话状态: ${session.state} | ⏳ 待确认交互: ${waitingCount}\n`;
+    let messageText = `${t('core', 'statusTextProjectLabel')}${repoName}\n`;
+    messageText += `${t('core', 'statusTextPathLabel')}${session.projectPath}\n`;
+    messageText += `${t('core', 'statusTextExecutorLabel')}${this.executor}\n`;
+    messageText += `${t('core', 'statusTextAgentLabel')}${statusText}${
+      pid ? ` (${t('core', 'statusTextPidLabel')}${pid})` : ''
+    }\n`;
+    messageText += `${t('core', 'statusTextSessionLabel')}${session.state}${t(
+      'core',
+      'statusTextPendingLabel'
+    )}${waitingCount}\n`;
     if (planStatus && planStatus.entries.length > 0) {
-      messageText += `🗺️ Agent 计划: ${planStatus.summary}\n`;
+      messageText += `${t('core', 'statusTextPlanLabel')}${planStatus.summary}\n`;
       const textList = planStatus.entries
         .slice(0, 5)
         .map((entry, idx) => `${idx + 1}. [${entry.status}/${entry.priority}] ${entry.content}`)
@@ -707,17 +813,29 @@ export class SessionManager extends EventEmitter {
         messageText += `${textList}\n`;
       }
       if (planStatus.current?.content) {
-        messageText += `🧩 当前步骤: ${planStatus.current.content.substring(0, 50)}${planStatus.current.content.length > 50 ? '...' : ''}\n`;
+        messageText += `${t('core', 'statusTextCurrentStepLabel')}${planStatus.current.content.substring(
+          0,
+          50
+        )}${planStatus.current.content.length > 50 ? '...' : ''}\n`;
       }
     } else {
-      messageText += '🗺️ Agent 计划: 暂无计划信息\n';
+      messageText += `${t('core', 'statusTextPlanLabel')}${t('core', 'statusTextPlanEmpty')}\n`;
     }
     if (session.queue.current) {
-      messageText += `📋 当前任务: ${session.queue.current.content.substring(0, 50)}...\n`;
+      messageText += `${t('core', 'statusTextCurrentTaskLabel')}${session.queue.current.content.substring(
+        0,
+        50
+      )}...\n`;
     } else {
-      messageText += `📋 当前任务: 空闲\n`;
+      messageText += `${t('core', 'statusTextCurrentTaskLabel')}${t(
+        'core',
+        'statusTextCurrentTaskIdle'
+      )}\n`;
     }
-    messageText += `📬 待执行队列: ${session.queue.pending.length} 个任务`;
+    messageText += `${t('core', 'statusTextQueueLabel')}${session.queue.pending.length}${t(
+      'core',
+      'statusTextQueueSuffix'
+    )}`;
 
     return {
       success: true,
@@ -761,8 +879,12 @@ export class SessionManager extends EventEmitter {
     if (!session) {
       return {
         success: false,
-        message: '当前没有活跃的会话',
-        card: this.createStatusCard('停止任务', '当前没有活跃的会话', false),
+        message: t('core', 'noActiveSessionMessage'),
+        card: this.createStatusCard(
+          t('core', 'stopTaskTitle'),
+          t('core', 'noActiveSessionMessage'),
+          false
+        ),
       };
     }
 
@@ -781,14 +903,20 @@ export class SessionManager extends EventEmitter {
       session.state = 'STOPPED';
 
       const message = stoppedCurrent
-        ? `✅ 已停止当前任务，并清空队列中的 ${queueCount} 个待执行任务`
-        : `✅ 已清空队列中的 ${queueCount} 个待执行任务`;
+        ? `${t('core', 'stopAllWithCurrentPrefix')}${queueCount}${t(
+            'core',
+            'stopAllWithCurrentSuffix'
+          )}`
+        : `${t('core', 'stopAllQueueOnlyPrefix')}${queueCount}${t(
+            'core',
+            'stopAllQueueOnlySuffix'
+          )}`;
 
       return {
         success: true,
         message,
         card: {
-          title: `🛑 停止任务 - ${repoName}`,
+          title: `${t('core', 'stopTaskCardTitlePrefix')}${repoName}`,
           elements: [
             {
               type: 'markdown',
@@ -796,7 +924,7 @@ export class SessionManager extends EventEmitter {
             },
             {
               type: 'markdown',
-              content: `📬 当前队列状态：**空闲**`,
+              content: t('core', 'queueIdleStatus'),
             },
           ],
         },
@@ -810,17 +938,23 @@ export class SessionManager extends EventEmitter {
         const removedTask = session.queue.pending.splice(index, 1)[0];
         return {
           success: true,
-          message: `✅ 已移除任务: ${removedTask.content.substring(0, 50)}...`,
+          message: `${t('core', 'removeTaskMessagePrefix')}${removedTask.content.substring(0, 50)}...`,
           card: {
-            title: `🗑️ 移除任务 - ${repoName}`,
+            title: `${t('core', 'removeTaskTitlePrefix')}${repoName}`,
             elements: [
               {
                 type: 'markdown',
-                content: `✅ 已成功移除队列中的任务\n\`\`\`\n${removedTask.content.substring(0, 100)}${removedTask.content.length > 100 ? '...' : ''}\n\`\`\``,
+                content: `${t('core', 'removeTaskCardIntro')}\n\`\`\`\n${removedTask.content.substring(
+                  0,
+                  100
+                )}${removedTask.content.length > 100 ? '...' : ''}\n\`\`\``,
               },
               {
                 type: 'markdown',
-                content: `🆔 任务ID: \`${taskId.substring(0, 8)}...\`\n📬 剩余任务: **${session.queue.pending.length}**`,
+                content: `${t('core', 'taskIdLabel')}\`${taskId.substring(0, 8)}...\`\n${t(
+                  'core',
+                  'remainingTasksLabel'
+                )}**${session.queue.pending.length}**`,
               },
             ],
           },
@@ -828,8 +962,12 @@ export class SessionManager extends EventEmitter {
       }
       return {
         success: false,
-        message: `❌ 未找到任务: ${taskId}`,
-        card: this.createStatusCard('移除任务', `未找到任务: ${taskId.substring(0, 8)}...`, false),
+        message: `${t('core', 'taskNotFoundPrefix')}${taskId}`,
+        card: this.createStatusCard(
+          t('core', 'removeTaskTitle'),
+          `${t('core', 'taskNotFoundPrefix')}${taskId.substring(0, 8)}...`,
+          false
+        ),
       };
     }
 
@@ -848,17 +986,20 @@ export class SessionManager extends EventEmitter {
 
       return {
         success: true,
-        message: `✅ 已停止当前任务`,
+        message: t('core', 'stopCurrentTaskMessage'),
         card: {
-          title: `🛑 停止任务 - ${repoName}`,
+          title: `${t('core', 'stopTaskCardTitlePrefix')}${repoName}`,
           elements: [
             {
               type: 'markdown',
-              content: `✅ 已成功停止当前任务`,
+              content: t('core', 'stopCurrentTaskCardMessage'),
             },
             {
               type: 'markdown',
-              content: `📋 已停止: \`${stoppedTask.content.substring(0, 50)}...\`\n📬 剩余队列: **${session.queue.pending.length}**`,
+              content: `${t('core', 'stoppedTaskLabel')}\`${stoppedTask.content.substring(0, 50)}...\`\n${t(
+                'core',
+                'remainingQueueLabel'
+              )}**${session.queue.pending.length}**`,
             },
           ],
         },
@@ -867,8 +1008,11 @@ export class SessionManager extends EventEmitter {
 
     return {
       success: true,
-      message: '🕐 没有正在运行的任务',
-      card: this.createStatusCard('停止任务', '没有正在运行的任务'),
+      message: t('core', 'noRunningTaskMessage'),
+      card: this.createStatusCard(
+        t('core', 'stopTaskTitle'),
+        t('core', 'noRunningTaskCardMessage')
+      ),
     };
   }
 
@@ -881,10 +1025,10 @@ export class SessionManager extends EventEmitter {
     if (session.pendingInteractions.size > 0) {
       return {
         success: false,
-        message: '当前已有待处理的权限请求，请先处理完当前请求再试',
+        message: t('core', 'pendingPermissionExists'),
         card: this.createStatusCard(
-          '模式切换',
-          '当前已有待处理的权限请求，请先处理完当前请求再试',
+          t('core', 'modeSwitchTitle'),
+          t('core', 'pendingPermissionExists'),
           false
         ),
       };
@@ -895,8 +1039,12 @@ export class SessionManager extends EventEmitter {
     if (!state || state.availableModes.length === 0) {
       return {
         success: false,
-        message: '当前 Agent 不支持模式切换',
-        card: this.createStatusCard('模式切换', '当前 Agent 不支持模式切换', false),
+        message: t('core', 'modeSwitchNotSupported'),
+        card: this.createStatusCard(
+          t('core', 'modeSwitchTitle'),
+          t('core', 'modeSwitchNotSupported'),
+          false
+        ),
       };
     }
 
@@ -904,7 +1052,9 @@ export class SessionManager extends EventEmitter {
     const fakeReq: RequestPermissionRequest = {
       sessionId: session.id,
       toolCall: {
-        title: `切换模式 (当前: ${state.currentModeId || '未知'})`,
+        title: `${t('core', 'modeSwitchPromptPrefix')}${
+          state.currentModeId || t('core', 'unknownValue')
+        }${t('core', 'modeSwitchPromptSuffix')}`,
         toolCallId: 'internal',
       },
       options: state.availableModes.map(m => ({
@@ -927,27 +1077,34 @@ export class SessionManager extends EventEmitter {
               ...res,
               card: res.success
                 ? {
-                    title: '🎨 模式切换成功',
+                    title: t('core', 'modeSwitchSuccessTitle'),
                     elements: [
                       {
                         type: 'markdown',
-                        content: `✅ **模式已切换为：** \`${optionId}\``,
+                        content: `${t('core', 'modeSwitchedPrefix')}${optionId}${t(
+                          'core',
+                          'modeSwitchedSuffix'
+                        )}`,
                       },
                     ],
                   }
-                : this.createStatusCard('模式切换', res.message, false),
+                : this.createStatusCard(t('core', 'modeSwitchTitle'), res.message, false),
             });
           }
         },
         reject: () =>
           resolve({
             success: false,
-            message: '已取消',
-            card: this.createStatusCard('模式选择', '已取消', false),
+            message: t('core', 'cancelled'),
+            card: this.createStatusCard(
+              t('core', 'modeSelectionTitle'),
+              t('core', 'cancelled'),
+              false
+            ),
           }),
         timestamp: Date.now(),
         data: {
-          title: fakeReq.toolCall.title ?? '选择',
+          title: fakeReq.toolCall.title ?? t('core', 'selectDefaultTitle'),
           options: fakeReq.options.map(o => ({ optionId: o.optionId, name: o.name })),
         },
       });
@@ -970,10 +1127,10 @@ export class SessionManager extends EventEmitter {
     if (session.pendingInteractions.size > 0) {
       return {
         success: false,
-        message: '当前已有待处理的权限请求，请先处理完当前请求再试',
+        message: t('core', 'pendingPermissionExists'),
         card: this.createStatusCard(
-          '模型切换',
-          '当前已有待处理的权限请求，请先处理完当前请求再试',
+          t('core', 'modelSwitchTitle'),
+          t('core', 'pendingPermissionExists'),
           false
         ),
       };
@@ -984,8 +1141,12 @@ export class SessionManager extends EventEmitter {
     if (!state || state.availableModels.length === 0) {
       return {
         success: false,
-        message: '当前 Agent 不支持模型切换',
-        card: this.createStatusCard('模型切换', '当前 Agent 不支持模型切换', false),
+        message: t('core', 'modelSwitchNotSupported'),
+        card: this.createStatusCard(
+          t('core', 'modelSwitchTitle'),
+          t('core', 'modelSwitchNotSupported'),
+          false
+        ),
       };
     }
 
@@ -993,7 +1154,9 @@ export class SessionManager extends EventEmitter {
     const fakeReq: RequestPermissionRequest = {
       sessionId: session.id,
       toolCall: {
-        title: `切换模型 (当前: ${state.currentModelId || '未知'})`,
+        title: `${t('core', 'modelSwitchPromptPrefix')}${
+          state.currentModelId || t('core', 'unknownValue')
+        }${t('core', 'modelSwitchPromptSuffix')}`,
         toolCallId: 'internal',
       },
       options: state.availableModels.map(m => ({
@@ -1016,27 +1179,34 @@ export class SessionManager extends EventEmitter {
               ...res,
               card: res.success
                 ? {
-                    title: '🤖 模型切换成功',
+                    title: t('core', 'modelSwitchSuccessTitle'),
                     elements: [
                       {
                         type: 'markdown',
-                        content: `✅ **模型已切换为：** \`${optionId}\``,
+                        content: `${t('core', 'modelSwitchedPrefix')}${optionId}${t(
+                          'core',
+                          'modelSwitchedSuffix'
+                        )}`,
                       },
                     ],
                   }
-                : this.createStatusCard('模型切换', res.message, false),
+                : this.createStatusCard(t('core', 'modelSwitchTitle'), res.message, false),
             });
           }
         },
         reject: () =>
           resolve({
             success: false,
-            message: '已取消',
-            card: this.createStatusCard('模型选择', '已取消', false),
+            message: t('core', 'cancelled'),
+            card: this.createStatusCard(
+              t('core', 'modelSelectionTitle'),
+              t('core', 'cancelled'),
+              false
+            ),
           }),
         timestamp: Date.now(),
         data: {
-          title: fakeReq.toolCall.title ?? '选择',
+          title: fakeReq.toolCall.title ?? t('core', 'selectDefaultTitle'),
           options: fakeReq.options.map(o => ({ optionId: o.optionId, name: o.name })),
         },
       });

@@ -131,6 +131,24 @@ function loadEnvConfig(): Partial<BatonConfig> {
     console.log('[Config] Loaded Slack credentials from environment variables');
   }
 
+  const discordBotToken = process.env.BATON_DISCORD_BOT_TOKEN;
+  const discordPublicKey = process.env.BATON_DISCORD_PUBLIC_KEY;
+  const discordApiBase = process.env.BATON_DISCORD_API_BASE;
+  const discordPort = process.env.BATON_DISCORD_PORT;
+  const discordWebhookPath = process.env.BATON_DISCORD_WEBHOOK_PATH;
+
+  if (discordBotToken || discordPublicKey || discordApiBase || discordPort || discordWebhookPath) {
+    envConfig.discord = {
+      botToken: discordBotToken || '',
+      publicKey: discordPublicKey || '',
+      apiBase: discordApiBase || undefined,
+      port: discordPort ? Number(discordPort) : undefined,
+      webhookPath: discordWebhookPath || undefined,
+    };
+
+    console.log('[Config] Loaded Discord credentials from environment variables');
+  }
+
   // 从环境变量读取项目路径
   const projectPath = process.env.BATON_PROJECT_PATH;
   if (projectPath) {
@@ -170,10 +188,12 @@ function mergeConfigs(
       path: envConfig.project?.path || fileConfig.project?.path || DEFAULT_CONFIG.project!.path,
       name: envConfig.project?.name || fileConfig.project?.name || DEFAULT_CONFIG.project!.name,
     },
+    language: envConfig.language || fileConfig.language || DEFAULT_CONFIG.language,
     feishu: envConfig.feishu || fileConfig.feishu,
     telegram: envConfig.telegram || fileConfig.telegram,
     whatsapp: envConfig.whatsapp || fileConfig.whatsapp,
     slack: envConfig.slack || fileConfig.slack,
+    discord: envConfig.discord || fileConfig.discord,
     acp: {
       command: envConfig.acp?.command || fileConfig.acp?.command,
       args: envConfig.acp?.args || fileConfig.acp?.args,

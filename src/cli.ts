@@ -11,6 +11,7 @@ import { SessionManager } from './core/session';
 import { TaskQueueEngine } from './core/queue';
 import { RepoManager } from './core/repo';
 import { loadConfig } from './config/loader';
+import { initI18n, resolveLocale, t } from './i18n';
 import type { IMMessage, IMResponse, Session, RepoInfo } from './types';
 import type { PermissionOption, RequestPermissionRequest } from '@agentclientprotocol/sdk';
 
@@ -21,14 +22,19 @@ interface PermissionRequestEvent {
 }
 
 // 模拟 IM 消息循环
-export async function main(workDir?: string) {
+export async function main(workDir?: string, locale?: string) {
+  let config: ReturnType<typeof loadConfig> | undefined;
+  try {
+    config = loadConfig();
+  } catch {
+    config = undefined;
+  }
+  initI18n({ defaultLocale: resolveLocale(locale ?? config?.language) });
   const rootPath = path.resolve(workDir || process.cwd());
 
-  console.log('╔════════════════════════════════════════╗');
-  console.log('║           Baton CLI v0.1.0             ║');
-  console.log('╚════════════════════════════════════════╝');
-  console.log(`\nRoot: ${rootPath}`);
-  console.log('Type your message (or command), or "quit" to exit:\n');
+  console.log(t('cli', 'banner'));
+  console.log(`\n${t('cli', 'rootLabel')}${rootPath}`);
+  console.log(t('cli', 'inputHint'));
 
   const mockUserId = 'local-user';
   const mockUserName = 'Developer';
@@ -45,7 +51,7 @@ export async function main(workDir?: string) {
 
   let selectedRepo: RepoInfo;
   if (repos.length === 0) {
-    console.log('\n⚠️  未发现任何 Git 仓库，使用当前目录');
+    console.log(`\n${t('cli', 'repoNone')}`);
     selectedRepo = {
       name: path.basename(rootPath),
       path: rootPath,
@@ -53,16 +59,16 @@ export async function main(workDir?: string) {
     };
   } else if (repos.length === 1) {
     selectedRepo = repos[0];
-    console.log(`\n📂 当前仓库: ${selectedRepo.name}\n`);
+    console.log(`\n${t('cli', 'repoCurrentLabel')}${selectedRepo.name}\n`);
   } else {
-    console.log('\n📦 发现多个 Git 仓库:\n');
+    console.log(`\n${t('cli', 'repoMultipleTitle')}\n`);
     repos.forEach((repo, idx) => {
       const relPath = repoManager.listRepos()[idx].path;
       console.log(`   ${idx}. ${repo.name} (${relPath})`);
     });
     console.log();
     selectedRepo = repos[0];
-    console.log(`📂 当前仓库: ${selectedRepo.name}\n`);
+    console.log(`${t('cli', 'repoCurrentLabel')}${selectedRepo.name}\n`);
   }
 
   // 加载配置获取 executor 与自定义 ACP 启动配置
@@ -71,17 +77,17 @@ export async function main(workDir?: string) {
     | { command: string; args?: string[]; cwd?: string; env?: Record<string, string> }
     | undefined;
   try {
-    const config = loadConfig();
-    executor = (config.acp?.executor || process.env.BATON_EXECUTOR || 'opencode').replace(
+    const effectiveConfig = config ?? loadConfig();
+    executor = (effectiveConfig.acp?.executor || process.env.BATON_EXECUTOR || 'opencode').replace(
       /_/g,
       '-'
     );
-    if (config.acp?.command) {
+    if (effectiveConfig.acp?.command) {
       acpLaunchConfig = {
-        command: config.acp.command,
-        args: config.acp.args,
-        cwd: config.acp.cwd,
-        env: config.acp.env,
+        command: effectiveConfig.acp.command,
+        args: effectiveConfig.acp.args,
+        cwd: effectiveConfig.acp.cwd,
+        env: effectiveConfig.acp.env,
       };
     }
   } catch {
@@ -99,28 +105,28 @@ export async function main(workDir?: string) {
     const toolCall = request.toolCall;
     const options = request.options;
 
-    console.log('\n' + '🔐'.repeat(10) + ' 权限确认 ' + '🔐'.repeat(10));
-    console.log(`操作：${toolCall.title}`);
+    console.log(`\n${'🔐'.repeat(10)} ${t('cli', 'permissionTitle')} ${'🔐'.repeat(10)}`);
+    console.log(`${t('cli', 'actionLabel')}${toolCall.title}`);
 
     if (toolCall.rawInput) {
       const details =
         typeof toolCall.rawInput === 'string'
           ? toolCall.rawInput
           : JSON.stringify(toolCall.rawInput, null, 2);
-      console.log(`细节：\n${details}`);
+      console.log(`${t('cli', 'detailsLabel')}\n${details}`);
     }
 
-    console.log('请选择：');
+    console.log(t('cli', 'choosePrompt'));
     options.forEach((opt: PermissionOption, index: number) => {
-      console.log(`${index}. ${opt.name}（${opt.optionId}）`);
+      console.log(`${index}. ${opt.name} (${opt.optionId})`);
     });
 
-    console.log(`\n回复数字 0..${options.length - 1} 选择。`);
     console.log(
-      `如果你想改需求/发送新指令，直接输入内容即可（会自动取消本次权限确认并按新任务处理）。`
+      `\n${t('cli', 'replyRangePrefix')}${options.length - 1}${t('cli', 'replyRangeSuffix')}`
     );
-    console.log(`停止任务请发送 /stop。`);
-    console.log('🆔 Request ID: ' + requestId); // 保留 ID 供参考
+    console.log(t('cli', 'newInstructionHint'));
+    console.log(t('cli', 'stopHint'));
+    console.log(`${t('cli', 'requestIdLabel')}${requestId}`);
     console.log('─'.repeat(30) + '\n');
 
     process.stdout.write('> '); // 恢复提示符
@@ -130,7 +136,7 @@ export async function main(workDir?: string) {
   const queueEngine = new TaskQueueEngine(async (session: Session, response: IMResponse) => {
     if (isShuttingDown) return;
     console.log('\n' + '─'.repeat(50));
-    console.log('🤖 Agent 回复:');
+    console.log(t('cli', 'agentReplyLabel'));
     console.log(response.message);
     console.log('─'.repeat(50));
     console.log();
@@ -148,7 +154,7 @@ export async function main(workDir?: string) {
 
   // 设置 Ctrl+C 处理
   rl.on('SIGINT', () => {
-    console.log('\n👋 Goodbye!');
+    console.log(`\n${t('cli', 'goodbye')}`);
     isShuttingDown = true;
     rl.close();
     process.exit(0);
@@ -156,7 +162,7 @@ export async function main(workDir?: string) {
 
   // 同时监听 process 的 SIGINT（某些终端 readline 捕获不到）
   process.on('SIGINT', () => {
-    console.log('\n👋 Goodbye!');
+    console.log(`\n${t('cli', 'goodbye')}`);
     isShuttingDown = true;
     rl.close();
     process.exit(0);
@@ -169,7 +175,7 @@ export async function main(workDir?: string) {
       const text = (await rl.question('> ')).trim();
 
       if (text.toLowerCase() === 'quit' || text.toLowerCase() === 'exit') {
-        console.log('\n👋 Goodbye!');
+        console.log(`\n${t('cli', 'goodbye')}`);
         rl.close();
         break;
       }
@@ -189,17 +195,17 @@ export async function main(workDir?: string) {
         // 如果是系统指令，直接显示结果
         if (!text.startsWith('/') || text === '/help' || text === '/current') {
           console.log('─'.repeat(50));
-          console.log('📨 Response:');
+          console.log(t('cli', 'responseLabel'));
           console.log(response.message);
           if (response.data) {
-            console.log('\n📊 Data:', JSON.stringify(response.data, null, 2));
+            console.log(`\n${t('cli', 'dataLabel')}`, JSON.stringify(response.data, null, 2));
           }
           console.log('─'.repeat(50));
           console.log();
         }
         // 如果是 prompt，等待回调显示结果
       } catch (error) {
-        console.error('❌ Error:', error);
+        console.error(t('cli', 'errorPrefix'), error);
       }
     }
   } finally {

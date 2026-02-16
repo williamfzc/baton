@@ -6,50 +6,25 @@
  */
 import { loadConfig } from './config/loader.js';
 import { createLogger } from './utils/logger.js';
+import { t } from './i18n/index.js';
 
 const logger = createLogger('Main');
-type RunMode = 'auto' | 'cli' | 'feishu' | 'telegram' | 'whatsapp' | 'slack';
+type RunMode = 'auto' | 'cli' | 'feishu' | 'telegram' | 'whatsapp' | 'slack' | 'discord';
 
 function printHelp(): void {
-  console.log(
-    `
-Usage:
-  baton [mode] [workdir]
-  baton --mode <auto|cli|feishu|telegram|whatsapp|slack> [--dir <path>]
-  baton -m <auto|cli|feishu|telegram|whatsapp|slack> [-C <path>]
-
-Modes:
-  auto      根据配置自动选择（默认）
-  cli       强制启动命令行交互模式
-  feishu    强制启动飞书模式
-  telegram  强制启动 Telegram 模式
-  whatsapp  强制启动 WhatsApp 模式
-  slack     强制启动 Slack 模式
-
-Options:
-  -h, --help              显示帮助
-  -m, --mode <mode>       指定启动模式
-  -d, --dir <path>        指定工作目录（等价于 -C）
-  -C <path>               指定工作目录
-  -c, --config <path>     指定配置文件路径（仅 feishu/telegram/auto 模式使用）
-
-Examples:
-  baton
-  baton cli
-  baton feishu /path/to/workspace
-  baton telegram /path/to/workspace
-  baton whatsapp /path/to/workspace
-  baton slack /path/to/workspace
-  baton --mode cli --dir /path/to/workspace
-  baton --mode auto --config ./baton.config.json
-`.trim()
-  );
+  console.log(t('main', 'helpText'));
 }
 
-function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPath?: string } {
+function parseArgs(argv: string[]): {
+  mode: RunMode;
+  workDir?: string;
+  configPath?: string;
+  lang?: string;
+} {
   let mode: RunMode = 'auto';
   let workDir: string | undefined;
   let configPath: string | undefined;
+  let lang: string | undefined;
   const positionals: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -62,9 +37,15 @@ function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPat
 
     if (arg === '-m' || arg === '--mode') {
       const value = argv[++i];
-      if (!value || !['auto', 'cli', 'feishu', 'telegram', 'whatsapp', 'slack'].includes(value)) {
+      if (
+        !value ||
+        !['auto', 'cli', 'feishu', 'telegram', 'whatsapp', 'slack', 'discord'].includes(value)
+      ) {
         throw new Error(
-          `无效 mode: ${value ?? '(empty)'}，可选: auto | cli | feishu | telegram | whatsapp | slack`
+          `${t('main', 'invalidModePrefix')}${value ?? t('main', 'emptyValue')}${t(
+            'main',
+            'invalidModeSuffix'
+          )}`
         );
       }
       mode = value as RunMode;
@@ -74,7 +55,7 @@ function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPat
     if (arg === '-d' || arg === '--dir' || arg === '-C') {
       const value = argv[++i];
       if (!value) {
-        throw new Error(`${arg} 需要一个路径参数`);
+        throw new Error(`${arg}${t('main', 'missingPathArgSuffix')}`);
       }
       workDir = value;
       continue;
@@ -83,14 +64,23 @@ function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPat
     if (arg === '-c' || arg === '--config') {
       const value = argv[++i];
       if (!value) {
-        throw new Error(`${arg} 需要一个文件路径参数`);
+        throw new Error(`${arg}${t('main', 'missingFileArgSuffix')}`);
       }
       configPath = value;
       continue;
     }
 
+    if (arg === '-l' || arg === '--lang' || arg === '--locale') {
+      const value = argv[++i];
+      if (!value) {
+        throw new Error(`${arg}${t('main', 'missingLangArgSuffix')}`);
+      }
+      lang = value;
+      continue;
+    }
+
     if (arg.startsWith('-')) {
-      throw new Error(`未知参数: ${arg}`);
+      throw new Error(`${t('main', 'unknownArgPrefix')}${arg}`);
     }
 
     positionals.push(arg);
@@ -99,7 +89,7 @@ function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPat
   // 兼容旧用法: baton [mode] [workdir]
   if (
     positionals[0] &&
-    ['auto', 'cli', 'feishu', 'telegram', 'whatsapp', 'slack'].includes(positionals[0])
+    ['auto', 'cli', 'feishu', 'telegram', 'whatsapp', 'slack', 'discord'].includes(positionals[0])
   ) {
     mode = positionals[0] as RunMode;
     if (!workDir && positionals[1]) {
@@ -109,58 +99,66 @@ function parseArgs(argv: string[]): { mode: RunMode; workDir?: string; configPat
     workDir = positionals[0];
   }
 
-  return { mode, workDir, configPath };
+  return { mode, workDir, configPath, lang };
 }
 
 async function main() {
-  const { mode, workDir, configPath } = parseArgs(process.argv.slice(2));
+  const { mode, workDir, configPath, lang } = parseArgs(process.argv.slice(2));
 
   if (mode === 'cli') {
     // 强制 CLI 模式
     const { main: cliMain } = await import('./cli.js');
-    await cliMain(workDir);
+    await cliMain(workDir, lang);
   } else if (mode === 'feishu') {
     // 强制飞书模式
     const { main: feishuMain } = await import('./feishu-server.js');
-    await feishuMain(configPath, workDir);
+    await feishuMain(configPath, workDir, lang);
   } else if (mode === 'telegram') {
     const { main: telegramMain } = await import('./telegram-server.js');
-    await telegramMain(configPath, workDir);
+    await telegramMain(configPath, workDir, lang);
   } else if (mode === 'whatsapp') {
     const { main: whatsappMain } = await import('./whatsapp-server.js');
-    await whatsappMain(configPath, workDir);
+    await whatsappMain(configPath, workDir, lang);
   } else if (mode === 'slack') {
     const { main: slackMain } = await import('./slack-server.js');
-    await slackMain(configPath, workDir);
+    await slackMain(configPath, workDir, lang);
+  } else if (mode === 'discord') {
+    const { main: discordMain } = await import('./discord-server.js');
+    await discordMain(configPath, workDir, lang);
   } else {
     // 自动判断
     const config = loadConfig(configPath);
 
     if (config.feishu?.appId && config.feishu?.appSecret) {
-      logger.info('🤖 检测到飞书配置，启动飞书模式...');
-      logger.info('   (使用 bun run start -- cli 强制 CLI 模式)');
+      logger.info(t('main', 'detectFeishu'));
+      logger.info(t('main', 'forceCliHint'));
       const { main: feishuMain } = await import('./feishu-server.js');
-      await feishuMain(configPath, workDir);
+      await feishuMain(configPath, workDir, lang);
     } else if (config.telegram?.botToken) {
-      logger.info('🤖 检测到 Telegram 配置，启动 Telegram 模式...');
-      logger.info('   (使用 bun run start -- cli 强制 CLI 模式)');
+      logger.info(t('main', 'detectTelegram'));
+      logger.info(t('main', 'forceCliHint'));
       const { main: telegramMain } = await import('./telegram-server.js');
-      await telegramMain(configPath, workDir);
+      await telegramMain(configPath, workDir, lang);
     } else if (config.whatsapp?.accessToken && config.whatsapp?.phoneNumberId) {
-      logger.info('🤖 检测到 WhatsApp 配置，启动 WhatsApp 模式...');
-      logger.info('   (使用 bun run start -- cli 强制 CLI 模式)');
+      logger.info(t('main', 'detectWhatsApp'));
+      logger.info(t('main', 'forceCliHint'));
       const { main: whatsappMain } = await import('./whatsapp-server.js');
-      await whatsappMain(configPath, workDir);
+      await whatsappMain(configPath, workDir, lang);
     } else if (config.slack?.botToken) {
-      logger.info('🤖 检测到 Slack 配置，启动 Slack 模式...');
-      logger.info('   (使用 bun run start -- cli 强制 CLI 模式)');
+      logger.info(t('main', 'detectSlack'));
+      logger.info(t('main', 'forceCliHint'));
       const { main: slackMain } = await import('./slack-server.js');
-      await slackMain(configPath, workDir);
+      await slackMain(configPath, workDir, lang);
+    } else if (config.discord?.botToken) {
+      logger.info(t('main', 'detectDiscord'));
+      logger.info(t('main', 'forceCliHint'));
+      const { main: discordMain } = await import('./discord-server.js');
+      await discordMain(configPath, workDir, lang);
     } else {
-      logger.info('💻 未检测到飞书配置，启动 CLI 模式...');
-      logger.info('   (使用 bun run start -- feishu/telegram/whatsapp/slack 强制 IM 模式)');
+      logger.info(t('main', 'detectCliFallback'));
+      logger.info(t('main', 'forceImHint'));
       const { main: cliMain } = await import('./cli.js');
-      await cliMain(workDir);
+      await cliMain(workDir, lang);
     }
   }
 }

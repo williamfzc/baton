@@ -4,6 +4,7 @@
  */
 import { describe, it, beforeEach, expect, mock } from 'bun:test';
 import { TaskQueueEngine } from '../../src/core/queue';
+import { initI18n, t } from '../../src/i18n/index.js';
 import type { Session, IMResponse } from '../../src/types';
 
 describe('TaskQueueEngine', () => {
@@ -31,6 +32,7 @@ describe('TaskQueueEngine', () => {
 
   beforeEach(() => {
     capturedResponses = [];
+    initI18n({ defaultLocale: 'en', fallbackLocale: 'en' });
     queueEngine = new TaskQueueEngine(async (session, response) => {
       capturedResponses.push(response);
     });
@@ -223,7 +225,7 @@ describe('TaskQueueEngine', () => {
       await new Promise(resolve => setTimeout(resolve, 20));
 
       expect(capturedResponses.length).toBe(1);
-      expect(capturedResponses[0].message).toContain('📍 任务进度');
+      expect(capturedResponses[0].message).toContain(t('core', 'planProgressTitle'));
       expect(capturedResponses[0].message).toContain('总计 2 步，完成 1，进行中 1，待处理 0');
       expect(capturedResponses[0].message).toContain('1. ✅🔥 收集上下文');
       expect(capturedResponses[0].message).toContain('2. 🚧🔥 实现并验证改动');

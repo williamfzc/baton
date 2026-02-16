@@ -100,6 +100,7 @@ claude-code-acp --help
     "path": "/path/to/your/project",
     "name": "my-project"
   },
+  "language": "en",
   "feishu": {
     "appId": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -193,6 +194,9 @@ baton slack
 
 # CLI 模式
 baton cli
+
+# 指定语言
+baton --mode cli --lang zh-CN
 ```
 
 ## 使用指令

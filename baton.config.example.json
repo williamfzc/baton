@@ -3,6 +3,7 @@
     "path": ".",
     "name": "my-project"
   },
+  "language": "en",
   "feishu": {
     "appId": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -31,6 +32,14 @@
     "permissionTimeout": 300,
     "port": 8081,
     "webhookPath": "/webhook/slack"
+  },
+  "discord": {
+    "botToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "publicKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "apiBase": "https://discord.com/api/v10",
+    "permissionTimeout": 300,
+    "port": 8083,
+    "webhookPath": "/webhook/discord"
   },
   "acp": {
     "command": "opencode",

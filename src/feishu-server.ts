@@ -10,43 +10,45 @@ import { loadConfig } from './config/loader';
 import { FeishuAdapter } from './im/feishu';
 import { RepoManager } from './core/repo';
 import { createLogger } from './utils/logger';
+import { initI18n, resolveLocale, t } from './i18n';
 import type { RepoInfo } from './types';
 import { registerIMAdapter, createIMAdapter } from './im/factory';
 import { IMPlatform } from './im/adapter';
 
 const logger = createLogger('FeishuServer');
 
-export async function main(configPath?: string, workDir?: string) {
+export async function main(configPath?: string, workDir?: string, locale?: string) {
   let adapter: FeishuAdapter | null = null;
 
   try {
     // 加载配置
     const config = loadConfig(configPath);
+    initI18n({ defaultLocale: resolveLocale(locale ?? config.language) });
 
     // 检查飞书配置
     if (!config.feishu) {
-      logger.error('Error: Feishu configuration is required');
-      logger.error('Please create baton.config.json with feishu settings');
-      logger.error('See baton.config.example.json for reference');
+      logger.error(t('server', 'configMissingFeishu'));
+      logger.error(t('server', 'configCreateHintFeishu'));
+      logger.error(t('server', 'configExampleHint'));
       process.exit(1);
     }
 
     // 优先使用命令行参数指定的工作目录，其次使用配置文件中的路径
     const rootPath = path.resolve(workDir || config.project?.path || process.cwd());
 
-    logger.info(`📂 扫描目录: ${rootPath}`);
+    logger.info(`${t('server', 'scanRootLabel')}${rootPath}`);
 
     const repoManager = new RepoManager();
     let repos: RepoInfo[] = [];
     try {
       repos = await repoManager.scanFromRoot(rootPath);
     } catch (error) {
-      logger.error({ error }, '扫描仓库失败');
+      logger.error({ error }, t('server', 'scanRepoFailed'));
     }
 
     let selectedRepo: RepoInfo | undefined;
     if (repos.length === 0) {
-      logger.warn('⚠️ 未发现任何 Git 仓库，使用当前目录作为工作目录');
+      logger.warn(t('server', 'noRepoFound'));
       selectedRepo = {
         name: path.basename(rootPath),
         path: rootPath,
@@ -56,15 +58,17 @@ export async function main(configPath?: string, workDir?: string) {
       repoManager.addRepo(selectedRepo);
     } else if (repos.length === 1) {
       selectedRepo = repos[0];
-      logger.info(`📂 当前仓库: ${selectedRepo.name}`);
+      logger.info(`${t('server', 'currentRepoLabel')}${selectedRepo.name}`);
     } else {
-      logger.info(`\n📦 发现 ${repos.length} 个 Git 仓库`);
+      logger.info(
+        `\n${t('server', 'multiRepoTitlePrefix')}${repos.length}${t('server', 'multiRepoTitleSuffix')}`
+      );
       repos.forEach((repo, idx) => {
         const relPath = repoManager.listRepos()[idx].path;
         logger.info(`   ${idx}. ${repo.name} (${relPath})`);
       });
       selectedRepo = repos[0];
-      logger.info(`📂 当前仓库: ${selectedRepo.name}`);
+      logger.info(`${t('server', 'currentRepoLabel')}${selectedRepo.name}`);
     }
 
     registerIMAdapter(IMPlatform.FEISHU, (cfg, repo, manager) => {
@@ -80,7 +84,9 @@ export async function main(configPath?: string, workDir?: string) {
 
     // 优雅关闭处理
     const shutdown = async (signal: string) => {
-      logger.info(`\nReceived ${signal}, shutting down gracefully...`);
+      logger.info(
+        `\n${t('server', 'shutdownReceivedPrefix')}${signal}${t('server', 'shutdownReceivedSuffix')}`
+      );
 
       // 移除监听器避免重复触发
       process.removeListener('SIGINT', sigintHandler);
@@ -90,10 +96,10 @@ export async function main(configPath?: string, workDir?: string) {
         if (adapter) {
           await adapter.stop();
         }
-        logger.info('✅ Gracefully shut down');
+        logger.info(t('server', 'gracefulShutdownSuccess'));
         process.exit(0);
       } catch (error) {
-        logger.error({ error }, 'Error during shutdown');
+        logger.error({ error }, t('server', 'shutdownError'));
         process.exit(1);
       }
     };
@@ -105,19 +111,18 @@ export async function main(configPath?: string, workDir?: string) {
     process.on('SIGTERM', sigtermHandler);
 
     // 启动
-    logger.info('╔════════════════════════════════════════╗');
-    logger.info('║        Baton Feishu Server             ║');
-    logger.info('║        (WebSocket Long Connection)     ║');
-    logger.info('╚════════════════════════════════════════╝');
-    logger.info(`\nProject: ${config.project.path}`);
-    logger.info(`App ID: ${config.feishu.appId}`);
-    logger.info(`Domain: ${config.feishu.domain || 'feishu'}`);
-    logger.info('\nConnecting to Feishu via WebSocket...\n');
+    logger.info(t('server', 'bannerFeishu'));
+    logger.info(`\n${t('server', 'projectLabel')}${config.project.path}`);
+    logger.info(`${t('server', 'appIdLabel')}${config.feishu.appId}`);
+    logger.info(
+      `${t('server', 'domainLabel')}${config.feishu.domain || t('server', 'domainDefault')}`
+    );
+    logger.info(`\n${t('server', 'connectingFeishu')}\n`);
 
     await adapter.start();
 
-    logger.info('✅ Connected successfully!');
-    logger.info('Press Ctrl+C to exit\n');
+    logger.info(t('server', 'connectedSuccess'));
+    logger.info(`${t('server', 'pressCtrlC')}\n`);
 
     // 保持进程运行（使用 setInterval 而不是 stdin.resume）
     const keepAlive = setInterval(() => {}, 1000);
@@ -127,7 +132,7 @@ export async function main(configPath?: string, workDir?: string) {
       clearInterval(keepAlive);
     });
   } catch (error) {
-    logger.error({ error }, 'Failed to start server');
+    logger.error({ error }, t('server', 'failedStart'));
     process.exit(1);
   }
 }

@@ -4,12 +4,16 @@
  * 确保配置项的类型安全和代码提示支持
  */
 
+import type { Locale } from '../i18n/index.js';
+
 export interface BatonConfig {
   // 项目配置
   project: {
     path: string;
     name: string;
   };
+
+  language?: Locale;
 
   // 飞书配置（长链接模式）
   feishu?: FeishuConfig;
@@ -19,6 +23,8 @@ export interface BatonConfig {
   whatsapp?: WhatsAppConfig;
 
   slack?: SlackConfig;
+
+  discord?: DiscordConfig;
 
   // ACP 配置
   acp?: ACPConfig;
@@ -64,6 +70,15 @@ export interface SlackConfig {
   webhookPath?: string;
 }
 
+export interface DiscordConfig {
+  botToken: string;
+  publicKey: string;
+  apiBase?: string;
+  permissionTimeout?: number;
+  port?: number;
+  webhookPath?: string;
+}
+
 export interface ACPConfig {
   // 自定义 Agent 启动命令（可选，不填则按 executor 使用内置命令）
   command?: string;
@@ -95,6 +110,7 @@ export const DEFAULT_CONFIG: Partial<BatonConfig> = {
     path: process.cwd(),
     name: 'default',
   },
+  language: 'en',
   acp: {
     executor: 'opencode',
   },

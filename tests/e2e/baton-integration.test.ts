@@ -88,7 +88,10 @@ describe('Baton MVP Tests', () => {
       assert.ok(
         response.message.includes('未发现任何 Git 仓库') ||
           response.message.includes('📦 可用仓库') ||
-          response.message.includes('当前仓库')
+          response.message.includes('当前仓库') ||
+          response.message.includes('No Git repositories found') ||
+          response.message.includes('Repository') ||
+          response.message.includes('Current repo')
       );
     });
 

@@ -8,6 +8,7 @@ import { createLogger } from '../utils/logger';
 import { BaseIMAdapter, IMPlatform, type IMMessageFormat, type IMReplyOptions } from './adapter';
 import type { UniversalCard } from './types';
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
+import { t } from '../i18n';
 
 const logger = createLogger('TelegramAdapter');
 
@@ -220,7 +221,8 @@ export class TelegramAdapter extends BaseIMAdapter {
 
     const user = message.from;
     const userId = user ? String(user.id) : 'unknown';
-    const userName = user?.username || [user?.first_name, user?.last_name].filter(Boolean).join(' ');
+    const userName =
+      user?.username || [user?.first_name, user?.last_name].filter(Boolean).join(' ');
 
     const imMessage: IMMessage = {
       userId,
@@ -242,17 +244,8 @@ export class TelegramAdapter extends BaseIMAdapter {
 
     this.updateSessionMessageContext(session.id, chatId, String(message.message_id));
 
-    let response: IMResponse;
-    const pendingInteraction = this.getPendingInteraction(session.id, text);
-    if (pendingInteraction) {
-      response = await this.sessionManager.resolveInteraction(
-        session.id,
-        pendingInteraction.requestId,
-        pendingInteraction.optionId
-      );
-    } else {
-      response = await this.dispatcher.dispatch(imMessage);
-    }
+    const interactionResponse = await this.sessionManager.tryResolveInteraction(session.id, text);
+    const response: IMResponse = interactionResponse || (await this.dispatcher.dispatch(imMessage));
 
     await this.replyWithResponse(chatId, String(message.message_id), session.id, response);
   }
@@ -306,7 +299,7 @@ export class TelegramAdapter extends BaseIMAdapter {
   private async handlePermissionRequest(event: PermissionRequestEvent): Promise<void> {
     const { sessionId, requestId, request } = event;
     const toolCall = request.toolCall;
-    const toolName = toolCall.title || 'Unknown Action';
+    const toolName = toolCall.title || t('im', 'unknownAction');
     const options = request.options;
     const context = this.messageContext.get(sessionId);
 
@@ -316,12 +309,12 @@ export class TelegramAdapter extends BaseIMAdapter {
     }
 
     const session = this.sessionManager.getSessionById(sessionId);
-    const repoPath = session?.repoName || session?.projectPath || 'unknown';
+    const repoPath = session?.repoName || session?.projectPath || t('im', 'unknownRepo');
 
     const text =
       `🔐 ${repoPath}\n\n` +
       `**${String(toolName)}**\n\n` +
-      `请点击按钮选择操作：\n\n` +
+      `${t('im', 'selectByButton')}\n\n` +
       options.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n');
 
     const keyboard = this.buildKeyboard(requestId, options);
@@ -366,36 +359,6 @@ export class TelegramAdapter extends BaseIMAdapter {
     ]);
   }
 
-  private getPendingInteraction(
-    sessionId: string,
-    text: string
-  ): { requestId: string; optionId: string } | null {
-    const session = this.sessionManager.getSessionById(sessionId);
-    if (!session || session.pendingInteractions.size === 0) {
-      return null;
-    }
-
-    const trimmed = text.trim();
-    for (const [requestId, interaction] of session.pendingInteractions) {
-      const index = parseInt(trimmed, 10);
-      if (!isNaN(index)) {
-        const arrayIndex = index - 1;
-        if (arrayIndex >= 0 && arrayIndex < interaction.data.options.length) {
-          return { requestId, optionId: interaction.data.options[arrayIndex].optionId };
-        }
-      }
-
-      const option = interaction.data.options.find(
-        o => o.name.toLowerCase() === trimmed.toLowerCase()
-      );
-      if (option) {
-        return { requestId, optionId: option.optionId };
-      }
-    }
-
-    return null;
-  }
-
   private renderMessageText(message: IMMessageFormat): string {
     if (message.card) {
       return this.renderCardToText(message.card);
@@ -418,9 +381,7 @@ export class TelegramAdapter extends BaseIMAdapter {
       if (element.type === 'markdown' || element.type === 'text') {
         lines.push(element.content);
       } else if (element.type === 'field_group') {
-        lines.push(
-          element.fields.map(field => `${field.title}: ${field.content}`).join('\n')
-        );
+        lines.push(element.fields.map(field => `${field.title}: ${field.content}`).join('\n'));
       } else if (element.type === 'hr') {
         lines.push('─'.repeat(16));
       } else if (element.type === 'picker') {

@@ -15,6 +15,7 @@ import { createLogger } from '../utils/logger';
 import { BaseIMAdapter, IMPlatform, type IMMessageFormat, type IMReplyOptions } from './adapter';
 import { convertToFeishuCard } from './feishu/converter';
 import type { UniversalCard } from './types';
+import { t } from '../i18n';
 
 const logger = createLogger('FeishuAdapter');
 
@@ -80,11 +81,11 @@ export class FeishuAdapter extends BaseIMAdapter {
   private queueEngine: TaskQueueEngine;
   // 存储 message_id 用于后续回复
   private messageContext: Map<string, { chatId: string; messageId: string }> = new Map();
-  // 存储 sessionContext 用于权限请求反查 userId
-  private sessionContext: Map<string, { userId: string }> = new Map();
   // 用于防止重复处理消息
   private processedMessages: Map<string, number> = new Map();
   private messageTTL: number = 300000; // 5分钟内认为是重复消息（防止网络延迟导致的重发）
+  private lastCleanup = 0;
+  private cleanupInterval = 60000;
 
   constructor(config: BatonConfig, selectedRepo?: RepoInfo, repoManager?: RepoManager) {
     super();
@@ -195,7 +196,7 @@ export class FeishuAdapter extends BaseIMAdapter {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const toolCall = request.toolCall;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const toolName = toolCall.title || 'Unknown Action';
+    const toolName = toolCall.title || t('im', 'unknownAction');
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const options = request.options as PermissionOption[];
 
@@ -214,7 +215,7 @@ export class FeishuAdapter extends BaseIMAdapter {
 
     // 获取 session 信息以获取仓库路径
     const session = this.sessionManager.getSessionById(sessionId);
-    const repoPath = session?.repoName || session?.projectPath || 'unknown';
+    const repoPath = session?.repoName || session?.projectPath || t('im', 'unknownRepo');
 
     // 构建通用卡片 - 使用文本列表（飞书不支持 picker）
     const optionsList = options as Array<{ optionId: string; name: string }>;
@@ -223,7 +224,7 @@ export class FeishuAdapter extends BaseIMAdapter {
       elements: [
         {
           type: 'markdown',
-          content: `**${toolName}**\n\n请回复数字选择操作：`,
+          content: `**${toolName}**\n\n${t('im', 'selectByNumberShort')}`,
         },
         {
           type: 'markdown',
@@ -231,7 +232,7 @@ export class FeishuAdapter extends BaseIMAdapter {
         },
         {
           type: 'markdown',
-          content: '\n💡 直接回复选项名称或序号即可',
+          content: `\n${t('im', 'replyNameOrIndexHint')}`,
         },
       ],
     };
@@ -245,7 +246,9 @@ export class FeishuAdapter extends BaseIMAdapter {
     } else {
       // 卡片发送失败，发送文本消息作为备选
       const optionsList = options as Array<{ name: string }>;
-      const fallbackText = `**${String(toolName)}**\n\n请回复数字选择操作：\n\n${optionsList.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n')}\n\n或者直接回复选项名称`;
+      const fallbackText = `**${String(toolName)}**\n\n${t('im', 'selectByNumberShort')}\n\n${optionsList
+        .map((opt, idx) => `${idx + 1}. ${opt.name}`)
+        .join('\n')}\n\n${t('im', 'replyNameHint')}`;
       logger.warn(
         { sessionId, toolName: String(toolName) },
         'Card sending failed, sending fallback text'
@@ -288,9 +291,10 @@ export class FeishuAdapter extends BaseIMAdapter {
 
         // 记录消息处理时间
         this.processedMessages.set(message.message_id, now);
-
-        // 清理过期的消息记录
-        this.cleanupProcessedMessages(now);
+        if (now - this.lastCleanup > this.cleanupInterval) {
+          this.cleanupProcessedMessages(now);
+          this.lastCleanup = now;
+        }
       }
 
       // 调试：打印关键字段
@@ -347,9 +351,6 @@ export class FeishuAdapter extends BaseIMAdapter {
       // 存储初始消息上下文
       this.updateSessionMessageContext(session.id, message.chat_id, message.message_id);
 
-      // 存储 sessionContext
-      this.sessionContext.set(session.id, { userId });
-
       // 添加 "眼睛" reaction 表示已读（仅在 message_id 存在时）
       if (message.message_id) {
         await this.addReaction(message.chat_id, message.message_id, 'OK').catch(() => {
@@ -358,16 +359,12 @@ export class FeishuAdapter extends BaseIMAdapter {
       }
 
       // 检查是否有待处理的交互（如仓库选择）
-      let response: IMResponse;
-      const pendingInteraction = this.getPendingInteraction(session.id, text.trim());
-      if (pendingInteraction) {
-        // 处理选择
-        const { requestId, optionId } = pendingInteraction;
-        response = await this.sessionManager.resolveInteraction(session.id, requestId, optionId);
-      } else {
-        // 发送到指令分发器
-        response = await this.dispatcher.dispatch(imMessage);
-      }
+      const interactionResponse = await this.sessionManager.tryResolveInteraction(
+        session.id,
+        text.trim()
+      );
+      const response: IMResponse =
+        interactionResponse || (await this.dispatcher.dispatch(imMessage));
 
       // 发送回复（优先使用卡片格式）
       if (response.card) {
@@ -637,41 +634,6 @@ export class FeishuAdapter extends BaseIMAdapter {
   }
 
   // 检查是否是待处理交互的选择回复
-  private getPendingInteraction(
-    sessionId: string,
-    text: string
-  ): { requestId: string; optionId: string } | null {
-    const session = this.sessionManager.getSessionById(sessionId);
-    if (!session || session.pendingInteractions.size === 0) {
-      return null;
-    }
-
-    // 检查输入是否是数字或选项名
-    const trimmed = text.trim();
-
-    // 获取第一个 pendingInteraction
-    for (const [requestId, interaction] of session.pendingInteractions) {
-      // 检查是否是序号（1-based）
-      const index = parseInt(trimmed, 10);
-      if (!isNaN(index)) {
-        const arrayIndex = index - 1;
-        if (arrayIndex >= 0 && arrayIndex < interaction.data.options.length) {
-          return { requestId, optionId: interaction.data.options[arrayIndex].optionId };
-        }
-      }
-
-      // 检查是否是选项名称
-      const option = interaction.data.options.find(
-        o => o.name.toLowerCase() === trimmed.toLowerCase()
-      );
-      if (option) {
-        return { requestId, optionId: option.optionId };
-      }
-    }
-
-    return null;
-  }
-
   private truncateMessage(msg: string, limit: number): string {
     if (msg.length <= limit) return msg;
     return msg.substring(0, limit) + '\n\n...(内容过多已截断)';
