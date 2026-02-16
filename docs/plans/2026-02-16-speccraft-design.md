@@ -558,3 +558,386 @@ craft export --target codex
 ---
 
 *设计完成，待实现*
+
+---
+
+## 11. 高级功能
+
+### 11.1 文档分章节生成
+
+支持在 template 中定义章节，每次 `craft next` 生成特定章节，而不是一次性生成整个文档。
+
+**workflow.yaml 配置：**
+
+```yaml
+commands:
+  spec:
+    description: 生成规格文档
+    template: templates/spec.md
+    output: "specs/{{feature}}/spec.md"
+    chapters:
+      - id: background
+        title: 背景与目标
+        description: 说明为什么要做这个功能
+      - id: user-stories
+        title: 用户故事
+        description: 以用户视角描述需求
+      - id: requirements
+        title: 功能需求
+        description: 详细的功能点描述
+      - id: acceptance-criteria
+        title: 验收标准
+        description: 如何验证功能完成
+```
+
+**使用方式：**
+
+```bash
+# 生成第一阶段章节
+craft run feature-dev spec --chapters background,user-stories
+
+# 生成第二阶段章节
+craft run feature-dev spec --chapters requirements,acceptance-criteria
+
+# 或按顺序逐步生成
+craft run feature-dev spec --next-chapter
+```
+
+---
+
+### 11.2 知识注入（Knowledge Injection）
+
+在特定步骤/章节执行前，强制注入知识内容，确保 Agent 完整阅读。生成完成后自动移除知识块，不污染最终产物。
+
+**workflow.yaml 配置：**
+
+```yaml
+commands:
+  design:
+    template: templates/design.md
+    output: "specs/{{feature}}/design.md"
+    injectKnowledge:
+      # 内置知识文件
+      - id: ab-testing
+        source: knowledge/ab-testing.md
+        removeFromOutput: true
+      # 外部知识文件（URL）
+      - id: company-standards
+        source: https://raw.githubusercontent.com/company/standards/main/coding.md
+        removeFromOutput: true
+      # 引用其他 skill
+      - id: security-guidelines
+        skill: company/security-guidelines
+        removeFromOutput: true
+```
+
+**模板示例：**
+
+```markdown
+<!-- templates/design.md -->
+# 设计文档
+
+## AB 实验设计
+
+<knowledge id="ab-testing">
+{{knowledge.ab-testing}}
+</knowledge>
+
+请基于以上 AB 实验规范，设计你的实验方案：
+
+## 代码规范
+
+<knowledge id="company-standards">
+{{knowledge.company-standards}}
+</knowledge>
+
+请确保你的设计符合以上代码规范：
+```
+
+**流程：**
+
+```
+1. CLI 渲染模板，注入知识内容到 <knowledge> 块
+2. Agent 基于完整内容（含知识）生成章节
+3. CLI 检测章节完成后，自动删除 <knowledge> 块
+4. 最终产物干净，无知识内容
+```
+
+**产物变化示例：**
+
+生成中（Agent 看到）：
+```markdown
+## AB 实验设计
+
+<knowledge id="ab-testing">
+## AB 实验规范
+1. 实验周期不少于 7 天
+2. 样本量需达到统计显著性
+...
+</knowledge>
+
+请基于以上 AB 实验规范，设计你的实验方案：
+
+[Agent 生成的实验方案...]
+```
+
+生成后（最终产物）：
+```markdown
+## AB 实验设计
+
+[Agent 生成的实验方案...]
+```
+
+---
+
+### 11.3 SubAgent 支持
+
+支持在命令中启动 SubAgent 来并行处理任务，或处理需要隔离上下文的复杂任务。
+
+**workflow.yaml 配置：**
+
+```yaml
+commands:
+  security-review:
+    description: 安全评审
+    output: "specs/{{feature}}/security-review.md"
+    subAgents:
+      - id: owasp-check
+        name: OWASP 漏洞扫描
+        prompt: |
+          作为安全专家，请审查以下代码/设计是否存在 OWASP Top 10 漏洞：
+          {{context.codeOrDesign}}
+          输出格式：
+          - 问题行号: 问题描述
+          
+      - id: data-privacy-check
+        name: 数据隐私合规检查
+        prompt: |
+          作为隐私合规专家，请审查以下设计是否符合 GDPR/个人信息保护法：
+          {{context.dataHandling}}
+          输出：
+          1. 隐私风险点
+          2. 合规建议
+          
+      - id: security-report
+        name: 安全评审报告生成
+        dependsOn: [owasp-check, data-privacy-check]
+        prompt: |
+          基于以下检查结果生成完整的安全评审报告：
+          
+          ## OWASP 漏洞扫描结果
+          {{subAgents.owasp-check.output}}
+          
+          ## 数据隐私合规检查结果
+          {{subAgents.data-privacy-check.output}}
+          
+          输出：
+          1. 执行摘要
+          2. 详细发现
+          3. 优先级建议
+```
+
+**使用方式：**
+
+```bash
+craft run feature-dev security-review
+# CLI 自动：
+# 1. 并行启动 owasp-check 和 data-privacy-check 两个 SubAgent
+# 2. 等待两者完成
+# 3. 启动 security-report SubAgent 汇总结果
+# 4. 生成最终报告
+```
+
+---
+
+### 11.4 上下文压缩建议
+
+当检测到上下文过长时，CLI 主动建议用户进行上下文压缩或启动 SubAgent。
+
+**触发条件：**
+
+- Token 数超过阈值（如 8000）
+- 对话轮次过多（如 20 轮以上）
+- 单次输出内容过长
+
+**workflow.yaml 配置：**
+
+```yaml
+contextManagement:
+  tokenThreshold: 8000
+  roundThreshold: 20
+  suggestions:
+    - type: compress
+      message: "当前上下文较长，建议压缩历史对话"
+    - type: subagent
+      message: "建议启动 SubAgent 处理当前任务"
+```
+
+**用户界面示例：**
+
+```bash
+$ craft run brainstorm next
+
+⚠️  上下文提示
+
+当前对话已进行 25 轮，上下文累积较多。
+建议启动 SubAgent 来处理当前任务，以提高效率。
+
+选项：
+  1. 启动 SubAgent（推荐）
+  2. 继续当前上下文
+  3. 压缩上下文后继续
+
+请选择: 1
+
+🚀 启动 SubAgent 处理当前任务...
+```
+
+---
+
+## 12. 完整 workflow.yaml 规范
+
+### 12.1 完整示例
+
+```yaml
+# workflow.yaml
+name: feature-dev
+version: 1.0.0
+description: 标准功能开发流程
+
+# 变量定义
+variables:
+  feature:
+    type: string
+    required: true
+    description: 功能名称
+  priority:
+    type: select
+    options: [P0, P1, P2, P3]
+    default: P2
+  outputDir:
+    type: string
+    default: "specs/{{feature}}"
+
+# 上下文管理
+contextManagement:
+  tokenThreshold: 8000
+  roundThreshold: 20
+
+# 命令定义
+commands:
+  init:
+    description: 初始化功能开发
+    template: templates/init.md
+    output: "{{outputDir}}/init.md"
+    
+  spec:
+    description: 生成需求规格
+    template: templates/spec.md
+    output: "{{outputDir}}/spec.md"
+    chapters:
+      - id: background
+        title: 背景与目标
+      - id: user-stories
+        title: 用户故事
+      - id: requirements
+        title: 功能需求
+      - id: acceptance-criteria
+        title: 验收标准
+    injectKnowledge:
+      - id: product-principles
+        source: knowledge/product-principles.md
+        removeFromOutput: true
+        
+  design:
+    description: 生成技术设计
+    template: templates/design.md
+    output: "{{outputDir}}/design.md"
+    injectKnowledge:
+      - id: tech-stack
+        source: knowledge/tech-stack.md
+        removeFromOutput: true
+      - id: security-guidelines
+        skill: company/security-guidelines
+        removeFromOutput: true
+        
+  security-review:
+    description: 安全评审
+    output: "{{outputDir}}/security-review.md"
+    subAgents:
+      - id: owasp-check
+        name: OWASP 漏洞扫描
+        prompt: |
+          审查以下设计是否存在 OWASP Top 10 漏洞：
+          {{context.design}}
+      - id: security-report
+        dependsOn: [owasp-check]
+        prompt: |
+          基于扫描结果生成安全评审报告：
+          {{subAgents.owasp-check.output}}
+          
+  tasks:
+    description: 生成任务列表
+    template: templates/tasks.md
+    output: "{{outputDir}}/tasks.md"
+    dependsOn: [spec, design]
+    
+  status:
+    description: 查看当前状态
+    
+  validate:
+    description: 验证所有文档完整性
+```
+
+### 12.2 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | 工作流名称 |
+| `version` | string | 版本号 |
+| `description` | string | 描述 |
+| `variables` | object | 变量定义 |
+| `contextManagement` | object | 上下文管理配置 |
+| `commands` | object | 命令定义 |
+| `commands.<name>.description` | string | 命令描述 |
+| `commands.<name>.template` | string | 模板文件路径 |
+| `commands.<name>.output` | string | 输出文件路径 |
+| `commands.<name>.chapters` | array | 章节定义（分章节生成） |
+| `commands.<name>.injectKnowledge` | array | 知识注入配置 |
+| `commands.<name>.subAgents` | array | SubAgent 配置 |
+| `commands.<name>.dependsOn` | array | 依赖的其他命令 |
+
+---
+
+## 13. 更新后的实现路线图
+
+### Phase 1: 核心 CLI (MVP)
+
+- [ ] `craft init` - 创建 marketplace
+- [ ] `craft copy` - 从模板复制
+- [ ] `craft run` - 运行工作流命令
+- [ ] 内置模板：brainstorm
+- [ ] workflow.yaml 基础解析
+
+### Phase 2: 高级功能
+
+- [ ] 文档分章节生成
+- [ ] 知识注入（Knowledge Injection）
+- [ ] `craft create` - 交互式创建工作流
+- [ ] 变量系统
+
+### Phase 3: SubAgent 与上下文
+
+- [ ] SubAgent 支持
+- [ ] 上下文压缩建议
+- [ ] 更多内置模板
+
+### Phase 4: 跨平台与完善
+
+- [ ] 跨平台导出
+- [ ] 从示例学习功能
+- [ ] 文档和示例
+
+---
+
+*设计完成，待实现*
