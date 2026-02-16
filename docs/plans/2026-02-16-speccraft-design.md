@@ -1040,3 +1040,129 @@ commands:
 ---
 
 *设计完成，待实现*
+
+---
+
+### 11.5 命令依赖与自动执行
+
+当执行某个命令时，自动检测并执行其依赖的前置命令。
+
+#### workflow.yaml 配置
+
+```yaml
+commands:
+  init:
+    description: 初始化
+    template: templates/init.md
+    output: "{{outputDir}}/init.md"
+    
+  spec:
+    description: 生成需求规格
+    template: templates/spec.md
+    output: "{{outputDir}}/spec.md"
+    dependsOn: [init]
+    
+  design:
+    description: 生成技术设计
+    template: templates/design.md
+    output: "{{outputDir}}/design.md"
+    dependsOn: [spec]
+    
+  tasks:
+    description: 生成任务列表
+    template: templates/tasks.md
+    output: "{{outputDir}}/tasks.md"
+    dependsOn: [design]
+    autoRunDeps: true  # 自动执行未完成的依赖命令
+```
+
+#### 使用方式
+
+```bash
+# 场景：想直接生成 tasks，但 design/spec/init 都没做
+craft run feature-dev tasks
+
+# CLI 检测依赖链：
+# ⚠️  检测到以下依赖命令未完成：
+#   - init (待开始)
+#   - spec (待开始)
+#   - design (待开始)
+#
+# 是否自动执行这些命令？ (Y/n): Y
+
+# 自动依次执行 init → spec → design → tasks
+
+# 如果不想自动执行，可以设置 autoRunDeps: false 或使用 --no-auto
+craft run feature-dev tasks --no-auto
+# ❌ 错误: 命令 "tasks" 依赖 "design"，请先执行:
+#   craft run feature-dev design
+```
+
+#### 配置说明
+
+| 字段 | 说明 |
+|------|------|
+| `dependsOn` | 依赖的命令列表，按顺序执行 |
+| `autoRunDeps` | 是否自动执行未完成的依赖，默认 `true` |
+
+---
+
+### 11.6 模板变量提示
+
+当用户未提供必填变量时，CLI 交互式提示用户输入。
+
+#### workflow.yaml 配置
+
+```yaml
+variables:
+  feature:
+    type: string
+    required: true
+    description: 功能名称
+    prompt: 请输入功能名称
+    
+  priority:
+    type: select
+    required: true
+    options: [P0, P1, P2, P3]
+    default: P2
+    description: 优先级
+    prompt: 请选择优先级
+    
+  description:
+    type: string
+    required: false
+    description: 功能描述
+    prompt: 请输入功能描述（可选）
+```
+
+#### 使用方式
+
+```bash
+# 未提供必填变量
+craft run feature-dev init
+
+# CLI 交互式提示：
+# ? 请输入功能名称: user-auth
+# ? 请选择优先级: (使用箭头键)
+#   ❯ P0
+#     P1
+#     P2
+#     P3
+# ? 请输入功能描述（可选，回车跳过）: 用户登录认证功能
+
+# ✅ 变量已保存，继续执行...
+```
+
+#### 变量定义字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 变量类型：`string`, `select`, `boolean` |
+| `required` | boolean | 是否必填 |
+| `description` | string | 变量描述 |
+| `prompt` | string | 交互式提示文案 |
+| `options` | array | 选择类型的选项列表 |
+| `default` | any | 默认值 |
+
+---
