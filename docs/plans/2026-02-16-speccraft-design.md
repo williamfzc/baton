@@ -1166,3 +1166,300 @@ craft run feature-dev init
 | `default` | any | 默认值 |
 
 ---
+
+---
+
+## 14. 命令类型系统
+
+### 14.1 核心理念
+
+工作流不区分"文档阶段"和"代码阶段"，所有操作都是**命令**。
+
+- 文档生成、代码实现、测试执行、状态查询... 都是命令
+- 命令之间可以自由组合、互相穿插
+- 通过 `dependsOn` 控制执行顺序
+
+### 14.2 命令类型
+
+| 类型 | 说明 | 产物 | 示例 |
+|------|------|------|------|
+| `template` | 生成文档 | markdown 文件 | spec, design, review |
+| `execution` | 执行动作 | 代码变更、测试结果 | implement, test, fix |
+| `query` | 查询状态 | 终端输出 | status, validate |
+| `interactive` | 交互式对话 | 更新文档/代码 | brainstorm, refine |
+
+### 14.3 类型详解
+
+#### template - 文档生成
+
+使用模板生成文档文件。
+
+```yaml
+commands:
+  spec:
+    type: template
+    description: 生成需求规格
+    template: templates/spec.md
+    output: "{{outputDir}}/spec.md"
+    chapters:
+      - id: background
+        title: 背景与目标
+    injectKnowledge:
+      - id: product-principles
+        source: knowledge/product-principles.md
+        removeFromOutput: true
+```
+
+#### execution - 执行动作
+
+执行代码相关的操作，如实现、测试、修复等。
+
+```yaml
+commands:
+  implement:
+    type: execution
+    description: 根据 spec 实现代码
+    dependsOn: [spec, design]
+    # execution 特有配置
+    execution:
+      mode: incremental    # incremental | full | dry-run
+      scope: affected      # affected | all
+      validation: true     # 执行后是否验证
+      
+  test:
+    type: execution
+    description: 运行测试
+    dependsOn: [implement]
+    execution:
+      command: npm test
+      failFast: true       # 失败即停止
+      coverage: true       # 是否生成覆盖率报告
+      
+  lint:
+    type: execution
+    description: 代码检查
+    execution:
+      command: eslint src/
+      fix: true            # 自动修复
+      
+  fix:
+    type: execution
+    description: 修复问题
+    execution:
+      mode: interactive    # 交互式修复
+```
+
+#### query - 查询状态
+
+查询并输出状态信息，不修改文件。
+
+```yaml
+commands:
+  status:
+    type: query
+    description: 查看当前状态
+    
+  validate:
+    type: query
+    description: 验证完整性
+    checks:
+      - spec-completeness
+      - test-coverage
+      - lint-errors
+      
+  diff:
+    type: query
+    description: 查看变更
+```
+
+#### interactive - 交互式对话
+
+通过对话推进工作，可能更新文档或代码。
+
+```yaml
+commands:
+  brainstorm:
+    type: interactive
+    description: 探索想法
+    # 交互式不需要模板，Agent 通过对话引导
+    
+  refine:
+    type: interactive
+    description: 基于反馈优化
+    dependsOn: [test]
+    # 根据测试结果，交互式讨论如何改进
+```
+
+### 14.4 完整工作流示例
+
+#### 示例 1：功能开发工作流（文档 + 代码混合）
+
+```yaml
+name: feature-dev
+description: 标准功能开发流程
+
+variables:
+  feature:
+    type: string
+    required: true
+    prompt: 请输入功能名称
+
+commands:
+  # 文档阶段
+  spec:
+    type: template
+    description: 生成需求规格
+    template: templates/spec.md
+    output: "{{outputDir}}/spec.md"
+    
+  design:
+    type: template
+    description: 生成技术设计
+    template: templates/design.md
+    output: "{{outputDir}}/design.md"
+    dependsOn: [spec]
+    
+  tasks:
+    type: template
+    description: 生成任务列表
+    template: templates/tasks.md
+    output: "{{outputDir}}/tasks.md"
+    dependsOn: [design]
+    
+  # 实现阶段
+  implement:
+    type: execution
+    description: 实现代码
+    dependsOn: [tasks]
+    execution:
+      mode: incremental
+      
+  test:
+    type: execution
+    description: 运行测试
+    dependsOn: [implement]
+    execution:
+      command: npm test
+      coverage: true
+      
+  # 验证阶段
+  validate:
+    type: query
+    description: 验证完整性
+    dependsOn: [test]
+    checks:
+      - spec-completeness
+      - test-coverage
+      - no-todo-comments
+      
+  # 迭代修复
+  fix:
+    type: execution
+    description: 修复问题
+    dependsOn: [validate]
+    execution:
+      mode: interactive
+```
+
+#### 示例 2：快速迭代工作流（代码优先）
+
+```yaml
+name: quick-prototype
+description: 快速原型迭代
+
+commands:
+  # 直接从代码开始
+  prototype:
+    type: execution
+    description: 快速实现原型
+    execution:
+      mode: full
+      
+  test:
+    type: execution
+    description: 测试原型
+    dependsOn: [prototype]
+    execution:
+      command: npm test
+      failFast: true
+      
+  # 根据测试结果反思
+  reflect:
+    type: interactive
+    description: 反思测试结果
+    dependsOn: [test]
+    
+  # 优化代码
+  refine:
+    type: execution
+    description: 优化实现
+    dependsOn: [reflect]
+    execution:
+      mode: incremental
+```
+
+#### 示例 3：Bug 修复工作流
+
+```yaml
+name: bug-fix
+description: Bug 修复流程
+
+variables:
+  bug-id:
+    type: string
+    required: true
+    prompt: 请输入 Bug ID
+
+commands:
+  reproduce:
+    type: execution
+    description: 复现问题
+    execution:
+      mode: interactive
+      
+  diagnose:
+    type: interactive
+    description: 诊断根因
+    dependsOn: [reproduce]
+    
+  fix:
+    type: execution
+    description: 修复代码
+    dependsOn: [diagnose]
+    execution:
+      mode: incremental
+      
+  verify:
+    type: execution
+    description: 验证修复
+    dependsOn: [fix]
+    execution:
+      command: npm test
+```
+
+### 14.5 使用方式
+
+```bash
+# 功能开发：文档 → 代码 → 测试
+craft run feature-dev spec
+craft run feature-dev design
+craft run feature-dev implement   # 写代码
+craft run feature-dev test        # 跑测试
+craft run feature-dev validate
+
+# 快速原型：代码 → 测试 → 反思 → 优化
+craft run quick-prototype prototype    # 直接写代码
+craft run quick-prototype test
+craft run quick-prototype reflect      # 对话反思
+craft run quick-prototype refine       # 再写代码
+
+# 自动执行依赖链
+craft run feature-dev test --auto
+# 自动执行: implement → test
+
+# 混合执行
+craft run feature-dev spec
+craft run feature-dev implement --skip design  # 跳过设计直接写代码
+```
+
+---
