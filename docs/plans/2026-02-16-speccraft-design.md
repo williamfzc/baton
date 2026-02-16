@@ -563,22 +563,22 @@ craft export --target codex
 
 ## 11. 高级功能
 
-### 11.1 文档分章节生成
 
-支持在 template 中定义章节，每次 `craft next` 生成特定章节，而不是一次性生成整个文档。
+### 11.1 文档分章节生成 + 状态追踪
 
-**workflow.yaml 配置：**
+支持将大文档分章节逐步生成，并通过状态追踪机制记录每个实例的进度。
+
+#### workflow.yaml 配置
 
 ```yaml
 commands:
-  spec:
-    description: 生成规格文档
-    template: templates/spec.md
-    output: "specs/{{feature}}/spec.md"
+  design:
+    template: templates/design.md
+    output: "{{outputDir}}/design.md"
     chapters:
       - id: background
         title: 背景与目标
-        description: 说明为什么要做这个功能
+        description: 说明功能背景和目标
       - id: user-stories
         title: 用户故事
         description: 以用户视角描述需求
@@ -588,23 +588,122 @@ commands:
       - id: acceptance-criteria
         title: 验收标准
         description: 如何验证功能完成
+    # 预定义章节分组
+    chapterGroups:
+      - name: phase-1
+        description: "第一阶段：需求理解"
+        chapters: [background, user-stories]
+      - name: phase-2
+        description: "第二阶段：详细需求"
+        chapters: [requirements, acceptance-criteria]
 ```
 
-**使用方式：**
+#### 状态追踪机制
+
+状态文件存储在项目目录下：`.craft/state/<workflow>/<instance>.yaml`
+
+```yaml
+# .craft/state/feature-dev/user-auth.yaml
+instance: user-auth
+workflow: feature-dev
+createdAt: 2026-02-16T10:00:00Z
+updatedAt: 2026-02-16T11:30:00Z
+
+variables:
+  feature: user-auth
+  priority: P0
+  outputDir: specs/user-auth
+
+# 各命令状态
+commands:
+  init:
+    status: completed
+    completedAt: 2026-02-16T10:05:00Z
+    output: specs/user-auth/init.md
+    
+  spec:
+    status: completed
+    completedAt: 2026-02-16T10:30:00Z
+    output: specs/user-auth/spec.md
+    
+  design:
+    status: in_progress
+    startedAt: 2026-02-16T10:35:00Z
+    chapters:
+      background: completed
+      user-stories: completed
+      requirements: pending
+      acceptance-criteria: pending
+    currentGroup: phase-2
+    
+  tasks:
+    status: pending
+```
+
+#### 使用方式
 
 ```bash
-# 生成第一阶段章节
-craft run feature-dev spec --chapters background,user-stories
+# 初始化新实例
+craft run feature-dev init --feature user-auth --priority P0
+# ✅ 创建状态文件: .craft/state/feature-dev/user-auth.yaml
 
-# 生成第二阶段章节
-craft run feature-dev spec --chapters requirements,acceptance-criteria
+# 生成 spec（完整文档）
+craft run feature-dev spec
+# ✅ 更新状态: spec.status = completed
 
-# 或按顺序逐步生成
-craft run feature-dev spec --next-chapter
+# 生成 design - 自动从 phase-1 开始
+craft run feature-dev design
+# 📝 生成章节: background, user-stories
+# ✅ 更新状态: design.chapters.background = completed
+# ✅ 更新状态: design.chapters.user-stories = completed
+# ✅ 更新状态: design.currentGroup = phase-2
+
+# 继续生成 - 自动进入 phase-2
+craft run feature-dev design
+# 📝 生成章节: requirements, acceptance-criteria
+# ✅ 更新状态: design.status = completed
+
+# 查看状态
+craft run feature-dev status
+
+# 输出：
+# ┌─────────────────────────────────────────┐
+# │ 📋 feature-dev: user-auth               │
+# ├─────────────────────────────────────────┤
+# │ ✅ init     已完成                       │
+# │ ✅ spec     已完成                       │
+# │ ✅ design   已完成 (4/4 章节)            │
+# │ ⏳ tasks   待开始                        │
+# ├─────────────────────────────────────────┤
+# │ 下一步: craft run feature-dev tasks     │
+# └─────────────────────────────────────────┘
+
+# 指定特定章节（跳过分组）
+craft run feature-dev design --chapters requirements
+
+# 重新生成某个章节
+craft run feature-dev design --chapters background --force
 ```
 
----
+#### 命令状态值
 
+| 状态 | 说明 |
+|------|------|
+| `pending` | 待开始 |
+| `in_progress` | 进行中 |
+| `completed` | 已完成 |
+| `failed` | 失败 |
+| `skipped` | 跳过 |
+
+#### 章节状态值
+
+| 状态 | 说明 |
+|------|------|
+| `pending` | 待生成 |
+| `completed` | 已生成 |
+| `failed` | 生成失败 |
+
+---
 ### 11.2 知识注入（Knowledge Injection）
 
 在特定步骤/章节执行前，强制注入知识内容，确保 Agent 完整阅读。生成完成后自动移除知识块，不污染最终产物。
