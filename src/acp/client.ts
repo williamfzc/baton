@@ -73,6 +73,7 @@ class BatonClient implements Client {
     reject: (error: Error) => void;
   } | null = null;
   private permissionHandler: PermissionHandler;
+  private projectPath: string;
   private terminals: Map<string, { process: ChildProcessWithoutNullStreams; output: string[] }> =
     new Map();
 
@@ -84,7 +85,8 @@ class BatonClient implements Client {
   private latestPlanEntries: ACPPlanEntry[] = [];
   private latestPlanUpdatedAt: number | null = null;
 
-  constructor(permissionHandler: PermissionHandler) {
+  constructor(projectPath: string, permissionHandler: PermissionHandler) {
+    this.projectPath = projectPath;
     this.permissionHandler = permissionHandler;
   }
 
@@ -178,9 +180,8 @@ class BatonClient implements Client {
     const targetPath = String(params.path);
     // 路径安全检查
     const resolvedPath = path.resolve(targetPath);
-    const projectRoot = process.cwd();
 
-    if (!resolvedPath.startsWith(projectRoot)) {
+    if (!resolvedPath.startsWith(this.projectPath)) {
       throw new Error('Access denied: path outside project root');
     }
 
@@ -194,9 +195,8 @@ class BatonClient implements Client {
     const content = String(params.content);
     // 路径安全检查
     const resolvedPath = path.resolve(targetPath);
-    const projectRoot = process.cwd();
 
-    if (!resolvedPath.startsWith(projectRoot)) {
+    if (!resolvedPath.startsWith(this.projectPath)) {
       throw new Error('Access denied: path outside project root');
     }
 
@@ -399,7 +399,7 @@ export class ACPClient {
     launchConfig?: ACPLaunchConfig
   ) {
     this.projectPath = projectPath;
-    this.batonClient = new BatonClient(permissionHandler);
+    this.batonClient = new BatonClient(projectPath, permissionHandler);
     this.executor = executor;
     this.launchConfig = launchConfig;
   }
