@@ -86,33 +86,6 @@ function loadEnvConfig(): Partial<BatonConfig> {
     console.log('[Config] Loaded Telegram credentials from environment variables');
   }
 
-  const whatsappAccessToken = process.env.BATON_WHATSAPP_ACCESS_TOKEN;
-  const whatsappPhoneNumberId = process.env.BATON_WHATSAPP_PHONE_NUMBER_ID;
-  const whatsappVerifyToken = process.env.BATON_WHATSAPP_VERIFY_TOKEN;
-  const whatsappApiBase = process.env.BATON_WHATSAPP_API_BASE;
-  const whatsappPort = process.env.BATON_WHATSAPP_PORT;
-  const whatsappWebhookPath = process.env.BATON_WHATSAPP_WEBHOOK_PATH;
-
-  if (
-    whatsappAccessToken ||
-    whatsappPhoneNumberId ||
-    whatsappVerifyToken ||
-    whatsappApiBase ||
-    whatsappPort ||
-    whatsappWebhookPath
-  ) {
-    envConfig.whatsapp = {
-      accessToken: whatsappAccessToken || '',
-      phoneNumberId: whatsappPhoneNumberId || '',
-      verifyToken: whatsappVerifyToken || undefined,
-      apiBase: whatsappApiBase || undefined,
-      port: whatsappPort ? Number(whatsappPort) : undefined,
-      webhookPath: whatsappWebhookPath || undefined,
-    };
-
-    console.log('[Config] Loaded WhatsApp credentials from environment variables');
-  }
-
   const slackBotToken = process.env.BATON_SLACK_BOT_TOKEN;
   const slackSigningSecret = process.env.BATON_SLACK_SIGNING_SECRET;
   const slackApiBase = process.env.BATON_SLACK_API_BASE;

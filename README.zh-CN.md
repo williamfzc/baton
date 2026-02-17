@@ -110,12 +110,12 @@ claude-code-acp --help
     "botToken": "123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   },
   "whatsapp": {
-    "accessToken": "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "phoneNumberId": "123456789012345",
-    "verifyToken": "whatsapp-verify-token",
-    "apiBase": "https://graph.facebook.com/v20.0",
-    "port": 8082,
-    "webhookPath": "/webhook/whatsapp"
+    "permissionTimeout": 300,
+    "wacli": {
+      "bin": "wacli",
+      "storeDir": "~/.wacli",
+      "pollIntervalMs": 2000
+    }
   },
   "slack": {
     "botToken": "xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -164,12 +164,6 @@ export BATON_EXECUTOR=codex
 export BATON_FEISHU_APP_ID=cli_xxx
 export BATON_FEISHU_APP_SECRET=xxx
 export BATON_TELEGRAM_BOT_TOKEN=123456:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export BATON_WHATSAPP_ACCESS_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export BATON_WHATSAPP_PHONE_NUMBER_ID=123456789012345
-export BATON_WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token
-export BATON_WHATSAPP_API_BASE=https://graph.facebook.com/v20.0
-export BATON_WHATSAPP_PORT=8082
-export BATON_WHATSAPP_WEBHOOK_PATH=/webhook/whatsapp
 export BATON_SLACK_BOT_TOKEN=xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 export BATON_SLACK_SIGNING_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 export BATON_SLACK_API_BASE=https://slack.com/api

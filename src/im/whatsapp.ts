@@ -1,5 +1,6 @@
 import type { BatonConfig } from '../config/types';
 import type { IMMessage, IMResponse, RepoInfo, Session } from '../types';
+import { spawn } from 'node:child_process';
 import { CommandDispatcher } from '../core/dispatcher';
 import { SessionManager } from '../core/session';
 import { TaskQueueEngine } from '../core/queue';
@@ -12,51 +13,28 @@ import { t } from '../i18n';
 
 const logger = createLogger('WhatsAppAdapter');
 
-interface WhatsAppMessageText {
-  body?: string;
+interface WacliMessage {
+  ChatJID: string;
+  ChatName: string;
+  MsgID: string;
+  SenderJID: string;
+  Timestamp: string;
+  FromMe: boolean;
+  Text: string;
+  DisplayText: string;
+  MediaType: string;
+  Snippet: string;
 }
 
-interface WhatsAppMessage {
-  id: string;
-  from: string;
-  timestamp?: string;
-  type?: string;
-  text?: WhatsAppMessageText;
+interface WacliMessagesListResponse {
+  messages?: WacliMessage[];
+  fts?: boolean;
 }
 
-interface WhatsAppContactProfile {
-  name?: string;
-}
-
-interface WhatsAppContact {
-  wa_id?: string;
-  profile?: WhatsAppContactProfile;
-}
-
-interface WhatsAppChangeValue {
-  messaging_product?: string;
-  metadata?: {
-    phone_number_id?: string;
-  };
-  contacts?: WhatsAppContact[];
-  messages?: WhatsAppMessage[];
-}
-
-interface WhatsAppChange {
-  value?: WhatsAppChangeValue;
-}
-
-interface WhatsAppEntry {
-  changes?: WhatsAppChange[];
-}
-
-interface WhatsAppWebhookBody {
-  object?: string;
-  entry?: WhatsAppEntry[];
-}
-
-interface WhatsAppApiResponse {
-  messages?: Array<{ id?: string }>;
+interface WacliStdResponse<T = unknown> {
+  success?: boolean;
+  data?: T;
+  error?: unknown;
 }
 
 interface PermissionRequestEvent {
@@ -65,33 +43,50 @@ interface PermissionRequestEvent {
   request: RequestPermissionRequest;
 }
 
-export class WhatsAppAdapter extends BaseIMAdapter {
+export class WhatsAppWacliAdapter extends BaseIMAdapter {
   readonly platform = IMPlatform.WHATSAPP;
 
   private config: BatonConfig;
-  private apiBase: string;
-  private accessToken: string;
-  private phoneNumberId: string;
   private dispatcher: CommandDispatcher;
   private sessionManager: SessionManager;
   private queueEngine: TaskQueueEngine;
-  private messageContext: Map<string, { chatId: string; messageId: string }> = new Map();
-  private processedMessages: Map<string, number> = new Map();
-  private messageTTL = 300000;
+
+  private wacliBin: string;
+  private wacliStoreDir?: string;
+  private pollIntervalMs: number;
+  private syncIdleExitMs: number;
+  private listLimit: number;
+  private includeNonText: boolean;
+
+  private running = false;
+  private pollPromise: Promise<void> | null = null;
+
+  // Serialize all wacli invocations to avoid store lock contention.
+  // `wacli sync` and `wacli send` will take an exclusive lock; `onTaskComplete`
+  // may run concurrently with polling, so we must enforce ordering.
+  private wacliSerial: Promise<void> = Promise.resolve();
+
+  private cursorTime: Date;
+  private processedKeys: Map<string, number> = new Map();
+  private processedTTL = 5 * 60_000;
   private lastCleanup = 0;
-  private cleanupInterval = 60000;
+  private cleanupInterval = 60_000;
+
+  private messageContext: Map<string, { chatId: string }> = new Map();
 
   constructor(config: BatonConfig, selectedRepo: RepoInfo, repoManager: RepoManager) {
     super();
     this.config = config;
 
-    if (!config.whatsapp?.accessToken || !config.whatsapp?.phoneNumberId) {
-      throw new Error('WhatsApp access token and phone number id are required');
-    }
+    const wacli = config.whatsapp?.wacli;
+    this.wacliBin = wacli?.bin || 'wacli';
+    this.wacliStoreDir = wacli?.storeDir;
+    this.pollIntervalMs = wacli?.pollIntervalMs ?? 2000;
+    this.syncIdleExitMs = wacli?.syncIdleExitMs ?? 1500;
+    this.listLimit = wacli?.listLimit ?? 50;
+    this.includeNonText = wacli?.includeNonText ?? false;
 
-    this.accessToken = config.whatsapp.accessToken;
-    this.phoneNumberId = config.whatsapp.phoneNumberId;
-    this.apiBase = config.whatsapp.apiBase || 'https://graph.facebook.com/v20.0';
+    this.cursorTime = this.parseInitialAfter(wacli?.initialAfter) || new Date();
 
     const executor = (config.acp?.executor || process.env.BATON_EXECUTOR || 'opencode').replace(
       /_/g,
@@ -107,7 +102,7 @@ export class WhatsAppAdapter extends BaseIMAdapter {
       : undefined;
 
     this.sessionManager = new SessionManager(
-      config.whatsapp.permissionTimeout,
+      config.whatsapp?.permissionTimeout,
       executor,
       acpLaunchConfig
     );
@@ -129,25 +124,53 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     this.dispatcher = new CommandDispatcher(this.sessionManager, this.queueEngine);
   }
 
-  async start(): Promise<void> {}
-
-  async stop(): Promise<void> {}
-
-  async handleWebhook(body: unknown): Promise<void> {
-    const payload = body as WhatsAppWebhookBody;
-    if (!payload.entry || payload.entry.length === 0) return;
-
-    for (const entry of payload.entry) {
-      const changes = entry.changes || [];
-      for (const change of changes) {
-        const value = change.value;
-        if (!value?.messages || value.messages.length === 0) continue;
-        const contacts = value.contacts || [];
-        for (const message of value.messages) {
-          await this.handleIncomingMessage(message, contacts);
-        }
-      }
+  async start(): Promise<void> {
+    // 快速探测 wacli 是否可用（避免 silent failure）
+    const check = await this.runWacli(['version'], 10_000);
+    if (check.exitCode !== 0) {
+      logger.error(
+        { stderr: check.stderr, stdout: check.stdout },
+        'wacli not available or failed to run'
+      );
+      throw new Error('wacli not available');
     }
+
+    // 认证状态检查：未登录时直接失败，避免一直空轮询
+    const auth = await this.runWacli(['auth', 'status'], 10_000);
+    if (auth.exitCode !== 0) {
+      logger.error({ stderr: auth.stderr, stdout: auth.stdout }, 'wacli auth status failed');
+      throw new Error('wacli auth status failed');
+    }
+
+    try {
+      const parsed = JSON.parse(auth.stdout || '{}') as WacliStdResponse<{
+        authenticated?: boolean;
+      }>;
+      if (!parsed.data?.authenticated) {
+        throw new Error('not authenticated');
+      }
+    } catch (error) {
+      logger.error(
+        { error, stdout: auth.stdout },
+        'wacli not authenticated; run `wacli auth` first'
+      );
+      throw new Error('wacli not authenticated; run `wacli auth` first');
+    }
+
+    this.running = true;
+    this.pollPromise = this.pollLoop();
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    try {
+      await this.pollPromise;
+    } finally {
+      this.pollPromise = null;
+    }
+
+    // Ensure all queued wacli commands are drained before shutdown.
+    await this.wacliSerial;
   }
 
   async sendMessage(
@@ -155,21 +178,24 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     message: IMMessageFormat,
     _options?: IMReplyOptions
   ): Promise<string> {
-    return this.sendWhatsAppMessage(chatId, undefined, message);
+    const text = this.renderMessageText(message);
+    await this.sendWacliText(chatId, text);
+    return '';
   }
 
   async sendReply(
     chatId: string,
-    messageId: string | undefined,
+    _messageId: string | undefined,
     message: IMMessageFormat
   ): Promise<string> {
-    return this.sendWhatsAppMessage(chatId, messageId, message);
+    // wacli send 不支持按 messageId 引用回复，这里退化为直接发送
+    return this.sendMessage(chatId, message);
   }
 
   async onTaskComplete(session: Session, response: IMResponse): Promise<void> {
     const context = this.messageContext.get(session.id);
     if (!context) {
-      logger.error('No message context found for session');
+      logger.error('No chat context found for session');
       return;
     }
 
@@ -182,96 +208,120 @@ export class WhatsAppAdapter extends BaseIMAdapter {
         { type: 'markdown', content: `🆔 ${session.id}` },
       ],
     });
-
-    const newMessageId = await this.sendWhatsAppText(context.chatId, context.messageId, text);
-    this.updateSessionMessageContext(session.id, context.chatId, newMessageId);
+    await this.sendWacliText(context.chatId, text);
   }
 
   formatMessage(response: IMResponse): IMMessageFormat {
     return { text: response.message };
   }
 
-  private async handleIncomingMessage(
-    message: WhatsAppMessage,
-    contacts: WhatsAppContact[]
-  ): Promise<void> {
-    if (!message.from) return;
-    const text = (message.text?.body || '').trim();
-    if (!text) return;
+  private async pollLoop(): Promise<void> {
+    while (this.running) {
+      try {
+        await this.syncOnce();
+        await this.consumeNewMessages();
+      } catch (error) {
+        logger.error({ error }, 'wacli polling loop error');
+      }
 
-    if (this.isDuplicateMessage(message.id)) {
-      return;
+      await this.sleep(this.pollIntervalMs);
     }
-
-    const contact = contacts.find(c => c.wa_id === message.from);
-    const userName = contact?.profile?.name || 'Unknown';
-    const userId = message.from;
-    const contextId = message.from;
-
-    const imMessage: IMMessage = {
-      userId,
-      userName,
-      text,
-      timestamp: Date.now(),
-      contextId,
-    };
-
-    const projectPath =
-      this.sessionManager.resolveProjectPath(imMessage.userId, imMessage.contextId) ||
-      this.config.project?.path ||
-      '';
-    const session = await this.sessionManager.getOrCreateSession(
-      imMessage.userId,
-      imMessage.contextId,
-      projectPath
-    );
-
-    this.updateSessionMessageContext(session.id, userId, message.id);
-
-    const interactionResponse = await this.sessionManager.tryResolveInteraction(session.id, text);
-    const response: IMResponse = interactionResponse || (await this.dispatcher.dispatch(imMessage));
-
-    await this.replyWithResponse(userId, message.id, session.id, response);
   }
 
-  private isDuplicateMessage(messageId: string): boolean {
-    const now = Date.now();
-    const previousTimestamp = this.processedMessages.get(messageId);
-    if (previousTimestamp && now - previousTimestamp < this.messageTTL) {
-      return true;
+  private async syncOnce(): Promise<void> {
+    const idleExit = `${Math.max(200, this.syncIdleExitMs)}ms`;
+    const res = await this.runWacli(['sync', '--once', '--idle-exit', idleExit], 120_000);
+    if (res.exitCode !== 0) {
+      logger.warn({ stderr: res.stderr, stdout: res.stdout }, 'wacli sync failed');
     }
-    this.processedMessages.set(messageId, now);
-    if (now - this.lastCleanup > this.cleanupInterval) {
-      this.cleanupProcessedMessages(now);
-      this.lastCleanup = now;
-    }
-    return false;
   }
 
-  private cleanupProcessedMessages(currentTime: number): void {
-    for (const [messageId, timestamp] of this.processedMessages.entries()) {
-      if (currentTime - timestamp >= this.messageTTL) {
-        this.processedMessages.delete(messageId);
+  private async consumeNewMessages(): Promise<void> {
+    // wacli 的 DB ts 精度为秒，做一个安全回看窗口避免漏消息
+    const safetyWindowMs = 2_000;
+    const after = new Date(this.cursorTime.getTime() - safetyWindowMs);
+    const messages = await this.listMessages(after);
+
+    // messages list 默认按时间倒序返回，这里翻转成时间正序处理
+    const ordered = [...messages].reverse();
+
+    let maxTs = this.cursorTime;
+    for (const m of ordered) {
+      const msgTime = new Date(m.Timestamp);
+      if (Number.isNaN(msgTime.getTime())) continue;
+
+      // 跳过自己发出的消息，避免回环
+      if (m.FromMe) continue;
+
+      const key = `${m.ChatJID}:${m.MsgID}`;
+      if (this.isDuplicate(key)) continue;
+
+      const text = this.pickMessageText(m);
+      if (!text) continue;
+
+      const userId = m.SenderJID || m.ChatJID;
+      const userName = m.SenderJID || m.ChatJID;
+      const contextId = m.ChatJID;
+
+      const imMessage: IMMessage = {
+        userId,
+        userName,
+        text,
+        timestamp: msgTime.getTime(),
+        contextId,
+      };
+
+      const projectPath =
+        this.sessionManager.resolveProjectPath(imMessage.userId, imMessage.contextId) ||
+        this.config.project?.path ||
+        '';
+      const session = await this.sessionManager.getOrCreateSession(
+        imMessage.userId,
+        imMessage.contextId,
+        projectPath
+      );
+
+      this.messageContext.set(session.id, { chatId: m.ChatJID });
+
+      const interactionResponse = await this.sessionManager.tryResolveInteraction(session.id, text);
+      const response: IMResponse =
+        interactionResponse || (await this.dispatcher.dispatch(imMessage));
+
+      await this.replyWithResponse(m.ChatJID, session.id, response);
+
+      if (msgTime.getTime() > maxTs.getTime()) {
+        maxTs = msgTime;
       }
     }
+
+    // cursorTime 前进
+    this.cursorTime = maxTs;
+  }
+
+  private pickMessageText(m: WacliMessage): string {
+    const text = (m.DisplayText || m.Text || '').trim();
+    if (text) return text;
+    if (this.includeNonText && (m.MediaType || '').trim()) {
+      return `[media] ${m.MediaType}`;
+    }
+    return '';
   }
 
   private async replyWithResponse(
     chatId: string,
-    messageId: string | undefined,
     sessionId: string,
     response: IMResponse
   ): Promise<void> {
     if (response.card) {
       const text = this.renderCardToText(response.card);
-      const newMessageId = await this.sendWhatsAppText(chatId, messageId, text);
-      this.updateSessionMessageContext(sessionId, chatId, newMessageId);
+      await this.sendWacliText(chatId, text);
       return;
     }
 
     if (response.message) {
-      const newMessageId = await this.sendWhatsAppText(chatId, messageId, response.message);
-      this.updateSessionMessageContext(sessionId, chatId, newMessageId);
+      await this.sendWacliText(chatId, response.message);
+      // wacli 模式没有可更新的 messageId，这里仅保留 chatId
+      this.messageContext.set(sessionId, { chatId });
     }
   }
 
@@ -283,7 +333,7 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     const context = this.messageContext.get(sessionId);
 
     if (!context) {
-      logger.warn({ sessionId }, 'No message context found for permission request');
+      logger.warn({ sessionId }, 'No chat context found for permission request');
       return;
     }
 
@@ -296,8 +346,7 @@ export class WhatsAppAdapter extends BaseIMAdapter {
       `${t('im', 'selectByNumber')}\n\n` +
       options.map((opt, idx) => `${idx + 1}. ${opt.name}`).join('\n');
 
-    const newMessageId = await this.sendWhatsAppText(context.chatId, context.messageId, text);
-    this.updateSessionMessageContext(sessionId, context.chatId, newMessageId);
+    await this.sendWacliText(context.chatId, text);
   }
 
   private async handleSelectionPrompt(event: {
@@ -310,15 +359,151 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     if (!context) return;
 
     const text = response.card ? this.renderCardToText(response.card) : response.message || '';
-    const newMessageId = await this.sendWhatsAppText(context.chatId, context.messageId, text);
-    this.updateSessionMessageContext(sessionId, context.chatId, newMessageId);
+    await this.sendWacliText(context.chatId, text);
+  }
+
+  private async listMessages(after: Date): Promise<WacliMessage[]> {
+    const res = await this.runWacli(
+      [
+        'messages',
+        'list',
+        '--limit',
+        String(this.listLimit),
+        '--after',
+        this.formatWacliTime(after),
+      ],
+      20_000
+    );
+
+    if (res.exitCode !== 0) {
+      logger.warn({ stderr: res.stderr, stdout: res.stdout }, 'wacli messages list failed');
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(res.stdout || '{}') as WacliMessagesListResponse;
+      return parsed.messages || [];
+    } catch (error) {
+      logger.warn({ error, stdout: res.stdout }, 'Failed to parse wacli messages list JSON');
+      return [];
+    }
+  }
+
+  private async sendWacliText(chatId: string, text: string): Promise<void> {
+    const msg = (text || ' ').trimEnd();
+    const res = await this.runWacli(['send', 'text', '--to', chatId, '--message', msg], 30_000);
+    if (res.exitCode !== 0) {
+      logger.error({ chatId, stderr: res.stderr, stdout: res.stdout }, 'Failed to send via wacli');
+    }
+  }
+
+  private runWacli(
+    args: string[],
+    timeoutMs: number
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    return this.enqueueWacli(() => this.runWacliRaw(args, timeoutMs));
+  }
+
+  private enqueueWacli<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.wacliSerial.then(fn, fn);
+    // Keep the chain alive regardless of success/failure.
+    this.wacliSerial = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
+
+  private runWacliRaw(
+    args: string[],
+    timeoutMs: number
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    const cmd = [this.wacliBin];
+    if (this.wacliStoreDir) {
+      cmd.push('--store', this.wacliStoreDir);
+    }
+    cmd.push('--json', ...args);
+
+    return new Promise(resolve => {
+      const child = spawn(cmd[0], cmd.slice(1), {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: process.env,
+      });
+
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
+      child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
+
+      const timer = setTimeout(
+        () => {
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            // ignore
+          }
+        },
+        Math.max(1000, timeoutMs)
+      );
+
+      child.on('close', code => {
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code });
+      });
+
+      child.on('error', err => {
+        clearTimeout(timer);
+        resolve({ stdout, stderr: `${stderr}\n${String(err)}`.trim(), exitCode: 1 });
+      });
+    });
+  }
+
+  private isDuplicate(key: string): boolean {
+    const now = Date.now();
+    const previous = this.processedKeys.get(key);
+    if (previous && now - previous < this.processedTTL) {
+      return true;
+    }
+
+    this.processedKeys.set(key, now);
+
+    if (now - this.lastCleanup > this.cleanupInterval) {
+      for (const [k, ts] of this.processedKeys.entries()) {
+        if (now - ts >= this.processedTTL) {
+          this.processedKeys.delete(k);
+        }
+      }
+      this.lastCleanup = now;
+    }
+
+    return false;
+  }
+
+  private parseInitialAfter(raw?: string): Date | null {
+    const v = (raw || '').trim();
+    if (!v) return null;
+    const ts = Date.parse(v);
+    if (Number.isNaN(ts)) return null;
+    return new Date(ts);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * wacli 的 `--after/--before` 使用 Go 的 `time.RFC3339` 解析，
+   * 不接受 Date#toISOString() 默认带的毫秒（.123Z）。
+   */
+  private formatWacliTime(d: Date): string {
+    const iso = d.toISOString();
+    return iso.replace(/\.\d{3}Z$/, 'Z');
   }
 
   private renderMessageText(message: IMMessageFormat): string {
     if (message.card) {
       return this.renderCardToText(message.card);
     }
-
     const base = message.text || message.markdown || '';
     if (message.code) {
       return `${base}\n\n\`\`\`\n${message.code.content}\n\`\`\``.trim();
@@ -331,7 +516,6 @@ export class WhatsAppAdapter extends BaseIMAdapter {
     if (card.title) {
       lines.push(card.title);
     }
-
     for (const element of card.elements) {
       if (element.type === 'markdown' || element.type === 'text') {
         lines.push(element.content);
@@ -343,62 +527,6 @@ export class WhatsAppAdapter extends BaseIMAdapter {
         lines.push(element.options.map(opt => opt.name).join('\n'));
       }
     }
-
     return lines.filter(Boolean).join('\n');
-  }
-
-  private async sendWhatsAppMessage(
-    chatId: string,
-    messageId: string | undefined,
-    message: IMMessageFormat
-  ): Promise<string> {
-    const text = this.renderMessageText(message);
-    return this.sendWhatsAppText(chatId, messageId, text);
-  }
-
-  private async sendWhatsAppText(
-    chatId: string,
-    messageId: string | undefined,
-    text: string
-  ): Promise<string> {
-    try {
-      const payload: Record<string, unknown> = {
-        messaging_product: 'whatsapp',
-        to: chatId,
-        text: {
-          body: text || ' ',
-        },
-      };
-
-      if (messageId) {
-        payload.context = { message_id: messageId };
-      }
-
-      const response = await fetch(`${this.apiBase}/${this.phoneNumberId}/messages`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${this.accessToken}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.error({ chatId, status: response.status, errorText }, 'Failed to send WhatsApp');
-        return '';
-      }
-
-      const json = (await response.json()) as WhatsAppApiResponse;
-      return json.messages?.[0]?.id || '';
-    } catch (error) {
-      logger.error({ error, chatId }, 'Failed to send WhatsApp');
-      return '';
-    }
-  }
-
-  private updateSessionMessageContext(sessionId: string, chatId: string, messageId: string): void {
-    if (!messageId) return;
-    this.messageContext.set(sessionId, { chatId, messageId });
   }
 }

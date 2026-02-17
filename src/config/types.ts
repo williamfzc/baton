@@ -52,13 +52,27 @@ export interface TelegramConfig {
 }
 
 export interface WhatsAppConfig {
-  accessToken: string;
-  phoneNumberId: string;
-  verifyToken?: string;
-  apiBase?: string;
   permissionTimeout?: number;
-  port?: number;
-  webhookPath?: string;
+
+  /**
+   * wacli 轮询模式配置
+   */
+  wacli?: {
+    /** wacli 可执行文件路径或命令名（默认: wacli） */
+    bin?: string;
+    /** wacli store 目录（默认: ~/.wacli） */
+    storeDir?: string;
+    /** 轮询间隔（毫秒，默认: 2000） */
+    pollIntervalMs?: number;
+    /** 每轮 sync 的 idle-exit（毫秒，默认: 1500） */
+    syncIdleExitMs?: number;
+    /** 拉取 messages list 的条数上限（默认: 50） */
+    listLimit?: number;
+    /** 启动时从哪个时间点之后开始处理（RFC3339 或 YYYY-MM-DD；默认: 现在） */
+    initialAfter?: string;
+    /** 是否把非文本消息转成占位文本（默认: false） */
+    includeNonText?: boolean;
+  };
 }
 
 export interface SlackConfig {

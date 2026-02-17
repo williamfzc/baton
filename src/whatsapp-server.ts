@@ -7,21 +7,19 @@ import { initI18n, resolveLocale, t } from './i18n';
 import type { RepoInfo } from './types';
 import { registerIMAdapter, createIMAdapter } from './im/factory';
 import { IMPlatform } from './im/adapter';
-import { WhatsAppAdapter } from './im/whatsapp';
+import { WhatsAppWacliAdapter } from './im/whatsapp';
 
 const logger = createLogger('WhatsAppServer');
 
 export async function main(configPath?: string, workDir?: string, locale?: string) {
-  let adapter: WhatsAppAdapter | null = null;
-  let server: ReturnType<typeof Bun.serve> | null = null;
+  let adapter: WhatsAppWacliAdapter | null = null;
 
   try {
     const config = loadConfig(configPath);
     initI18n({ defaultLocale: resolveLocale(locale ?? config.language) });
 
-    if (!config.whatsapp?.accessToken || !config.whatsapp?.phoneNumberId) {
-      logger.error(t('server', 'configMissingWhatsApp'));
-      logger.error(t('server', 'configCreateHintWhatsApp'));
+    if (!config.whatsapp?.wacli) {
+      logger.error('Error: WhatsApp wacli configuration is required (whatsapp.wacli)');
       logger.error(t('server', 'configExampleHint'));
       process.exit(1);
     }
@@ -63,7 +61,7 @@ export async function main(configPath?: string, workDir?: string, locale?: strin
     }
 
     registerIMAdapter(IMPlatform.WHATSAPP, (cfg, repo, manager) => {
-      return new WhatsAppAdapter(cfg, repo, manager);
+      return new WhatsAppWacliAdapter(cfg, repo, manager);
     });
 
     adapter = createIMAdapter(
@@ -71,48 +69,20 @@ export async function main(configPath?: string, workDir?: string, locale?: strin
       config,
       selectedRepo,
       repoManager
-    ) as WhatsAppAdapter;
-
-    const port = config.whatsapp.port || 8080;
-    const webhookPath = config.whatsapp.webhookPath || '/webhook/whatsapp';
-    const verifyToken = config.whatsapp.verifyToken;
-
-    server = Bun.serve({
-      port,
-      fetch: async request => {
-        const url = new URL(request.url);
-        if (url.pathname !== webhookPath) {
-          return new Response('Not Found', { status: 404 });
-        }
-
-        if (request.method === 'GET') {
-          const mode = url.searchParams.get('hub.mode');
-          const token = url.searchParams.get('hub.verify_token');
-          const challenge = url.searchParams.get('hub.challenge');
-
-          if (mode === 'subscribe' && token && verifyToken && token === verifyToken) {
-            return new Response(challenge || '', { status: 200 });
-          }
-
-          return new Response('Forbidden', { status: 403 });
-        }
-
-        if (request.method === 'POST') {
-          try {
-            const body = (await request.json()) as unknown;
-            await adapter?.handleWebhook(body as Record<string, unknown>);
-            return new Response('OK', { status: 200 });
-          } catch (error) {
-            logger.error({ error }, 'Failed to handle WhatsApp webhook');
-            return new Response('Bad Request', { status: 400 });
-          }
-        }
-
-        return new Response('Method Not Allowed', { status: 405 });
-      },
-    });
+    ) as WhatsAppWacliAdapter;
 
     await adapter.start();
+
+    const wacli = config.whatsapp?.wacli;
+    logger.info(t('server', 'bannerWhatsApp'));
+    logger.info(`\n${t('server', 'projectLabel')}${config.project.path}`);
+    logger.info(`Mode: wacli polling`);
+    logger.info(`wacli bin: ${wacli?.bin || 'wacli'}`);
+    if (wacli?.storeDir) {
+      logger.info(`wacli store: ${wacli.storeDir}`);
+    }
+    logger.info(`poll interval: ${wacli?.pollIntervalMs ?? 2000}ms`);
+    logger.info(`\nWaiting for WhatsApp messages via wacli...\n`);
 
     const shutdown = async (signal: string) => {
       logger.info(
@@ -124,9 +94,6 @@ export async function main(configPath?: string, workDir?: string, locale?: strin
       try {
         if (adapter) {
           await adapter.stop();
-        }
-        if (server) {
-          server.stop();
         }
         logger.info(t('server', 'gracefulShutdownSuccess'));
         process.exit(0);
@@ -141,11 +108,6 @@ export async function main(configPath?: string, workDir?: string, locale?: strin
 
     process.on('SIGINT', sigintHandler);
     process.on('SIGTERM', sigtermHandler);
-
-    logger.info(t('server', 'bannerWhatsApp'));
-    logger.info(`\n${t('server', 'projectLabel')}${config.project.path}`);
-    logger.info(`${t('server', 'webhookLabel')}http://localhost:${port}${webhookPath}`);
-    logger.info(`\n${t('server', 'waitingWhatsApp')}\n`);
 
     const keepAlive = setInterval(() => {}, 1000);
     process.on('exit', () => {

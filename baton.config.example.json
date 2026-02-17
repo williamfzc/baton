@@ -18,13 +18,12 @@
     "permissionTimeout": 300
   },
   "whatsapp": {
-    "accessToken": "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "phoneNumberId": "123456789012345",
-    "verifyToken": "whatsapp-verify-token",
-    "apiBase": "https://graph.facebook.com/v20.0",
     "permissionTimeout": 300,
-    "port": 8082,
-    "webhookPath": "/webhook/whatsapp"
+    "wacli": {
+      "bin": "wacli",
+      "storeDir": "~/.wacli",
+      "pollIntervalMs": 2000
+    }
   },
   "slack": {
     "botToken": "xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",

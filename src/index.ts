@@ -129,6 +129,10 @@ async function main() {
     // 自动判断
     const config = loadConfig(configPath);
 
+    const hasWhatsAppWacliConfig =
+      !!config.whatsapp?.wacli?.storeDir ||
+      !!config.whatsapp?.wacli?.bin;
+
     if (config.feishu?.appId && config.feishu?.appSecret) {
       logger.info(t('main', 'detectFeishu'));
       logger.info(t('main', 'forceCliHint'));
@@ -139,7 +143,7 @@ async function main() {
       logger.info(t('main', 'forceCliHint'));
       const { main: telegramMain } = await import('./telegram-server.js');
       await telegramMain(configPath, workDir, lang);
-    } else if (config.whatsapp?.accessToken && config.whatsapp?.phoneNumberId) {
+    } else if (hasWhatsAppWacliConfig) {
       logger.info(t('main', 'detectWhatsApp'));
       logger.info(t('main', 'forceCliHint'));
       const { main: whatsappMain } = await import('./whatsapp-server.js');

@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 bun.lockb
+bun.lock
 .pnp
 .pnp.js
 
@@ -57,3 +58,4 @@ PRD.md  # Product requirement doc (internal)
 .acp/
 agent-logs/
 baton.config.json
+.trae/
