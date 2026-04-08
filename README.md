@@ -9,20 +9,140 @@ Intelligent agent bridge that connects IM channels with local ACP agents.
 
 ## Installation
 
-### One-line install
+### Recommended path
+
+For a first-time setup, the least confusing path is:
+
+1. Install Baton
+2. Confirm the `baton` command works
+3. Install one ACP runtime
+4. Create a minimal config file, then start with Feishu
+
+### 1. Install Baton
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/williamfzc/baton/main/install.sh | bash
 ```
 
-Installs to:
+The install script automatically:
 
-- `XDG_BIN_HOME` if set
-- otherwise `~/.local/bin`
+- detects your OS and architecture
+- downloads the latest release
+- installs to `XDG_BIN_HOME` if set, otherwise `~/.local/bin`
 
 No `sudo` required.
 
-### Manual install
+### 2. Confirm the install path
+
+After installation, run:
+
+```bash
+baton --help
+```
+
+If the command is not found, your install directory is probably not in PATH yet. Add this to your shell config such as `~/.zshrc`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 3. Install an ACP runtime
+
+Baton is the bridge. You still need an ACP runtime to execute tasks.
+
+Supported options:
+
+- `opencode`: default runtime via `opencode acp`
+- `codex`: uses `codex-acp`
+- `claude-code`: uses `claude-code-acp`
+
+If you already have `opencode` installed, you can usually keep the default executor. Otherwise, switch the executor in the config file.
+
+Official repositories:
+
+- Codex ACP: https://github.com/zed-industries/codex-acp
+- Claude Code ACP: https://github.com/zed-industries/claude-code-acp
+
+Verify commands:
+
+```bash
+opencode acp --help
+codex-acp --help
+claude-code-acp --help
+```
+
+### 4. Create the config file
+
+The recommended place is your project root as `baton.config.json`.
+
+By default, Baton looks for these file names from the current directory upward for up to 5 levels:
+
+- `baton.config.json`
+- `.batonrc.json`
+- `baton.json`
+
+If you prefer another location, you can pass it explicitly:
+
+```bash
+baton --config /absolute/path/to/baton.config.json feishu
+```
+
+For a first run, this minimal config is enough, with Feishu as the default channel:
+
+```json
+{
+  "project": {
+    "path": "/path/to/your/project",
+    "name": "my-project"
+  },
+  "language": "en",
+  "feishu": {
+    "appId": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "domain": "feishu"
+  },
+  "acp": {
+    "executor": "opencode"
+  }
+}
+```
+
+The four values you usually need to replace are:
+
+- `project.path`: absolute path to your local project
+- `project.name`: display name shown inside Baton
+- `feishu.appId`: your Feishu app ID
+- `feishu.appSecret`: your Feishu app secret
+
+If you do not want to store secrets in the file, use environment variables instead:
+
+```bash
+export BATON_FEISHU_APP_ID=cli_xxx
+export BATON_FEISHU_APP_SECRET=xxx
+export BATON_EXECUTOR=opencode
+```
+
+### 5. Start with Feishu
+
+```bash
+baton feishu
+```
+
+If your config already contains `feishu.appId` and `feishu.appSecret`, you can also run:
+
+```bash
+baton
+```
+
+In that case, Baton auto-detects Feishu mode.
+
+If you only want to verify the local agent chain first, start with CLI mode:
+
+```bash
+baton cli
+```
+
+### Other installation methods
 
 Download from [Releases](https://github.com/williamfzc/baton/releases):
 
@@ -36,19 +156,13 @@ mkdir -p ~/.local/bin
 mv baton-* ~/.local/bin/baton
 ```
 
-Ensure `~/.local/bin` is in PATH (e.g. `~/.zshrc`):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
 ### Run from source
 
 ```bash
 git clone https://github.com/williamfzc/baton.git
 cd baton
 bun install
-bun run start:feishu
+bun run start:cli
 ```
 
 ## Supported IM Platforms
@@ -72,21 +186,9 @@ Baton is based on the [ACP protocol](https://agentclientprotocol.org/) and curre
 | **codex**    | `codex-acp`       | Requires `codex-acp` in PATH       |
 | **claude**   | `claude-code-acp` | Requires `claude-code-acp` in PATH |
 
-### ACP Runtime Links
-
-- Codex ACP: https://github.com/zed-industries/codex-acp
-- Claude Code ACP: https://github.com/zed-industries/claude-code-acp
-
-Verify commands:
-
-```bash
-codex-acp --help
-claude-code-acp --help
-```
-
 ## Quick Start
 
-### 1. Configure
+### 1. Full config reference
 
 Create `baton.config.json`:
 

@@ -9,20 +9,140 @@
 
 ## 安装
 
-### 一键安装（推荐）
+### 推荐路径
+
+第一次使用时，按下面 4 步走最不容易绕：
+
+1. 安装 Baton
+2. 确认 `baton` 命令可用
+3. 安装一个 ACP Runtime
+4. 写一个最小配置文件，然后先用飞书启动
+
+### 1. 安装 Baton
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/williamfzc/baton/main/install.sh | bash
 ```
 
-安装脚本默认安装到用户目录：
+安装脚本会自动：
 
-- `XDG_BIN_HOME`（若已设置）
-- 否则 `~/.local/bin`
+- 检测系统和架构
+- 下载最新 release
+- 安装到 `XDG_BIN_HOME`（若已设置）或 `~/.local/bin`
 
 无需 `sudo`。
 
-### 手动安装
+### 2. 确认安装路径
+
+安装完成后，先执行：
+
+```bash
+baton --help
+```
+
+如果提示找不到命令，通常是因为安装目录还没加入 PATH。把下面这行加入 shell 配置文件（如 `~/.zshrc`）：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 3. 安装 ACP Runtime
+
+Baton 本身是桥梁，还需要一个 ACP Runtime 才能真正执行任务。
+
+当前支持：
+
+- `opencode`：默认使用 `opencode acp`
+- `codex`：使用 `codex-acp`
+- `claude-code`：使用 `claude-code-acp`
+
+如果你已经安装了 `opencode`，通常不需要额外配置 executor；否则可以在配置文件里切换。
+
+为避免找不到安装入口，建议直接使用下列官方仓库：
+
+- Codex ACP: https://github.com/zed-industries/codex-acp
+- Claude Code ACP: https://github.com/zed-industries/claude-code-acp
+
+安装完成后请确认命令可用：
+
+```bash
+opencode acp --help
+codex-acp --help
+claude-code-acp --help
+```
+
+### 4. 写配置文件
+
+推荐在你的项目根目录创建 `baton.config.json`。
+
+Baton 默认会从当前目录开始，向上最多查找 5 层这些文件名：
+
+- `baton.config.json`
+- `.batonrc.json`
+- `baton.json`
+
+如果你更想把配置放在别的位置，也可以在启动时显式指定：
+
+```bash
+baton --config /absolute/path/to/baton.config.json feishu
+```
+
+第一次使用时，建议先用下面这个最小配置，以飞书作为默认 channel：
+
+```json
+{
+  "project": {
+    "path": "/path/to/your/project",
+    "name": "my-project"
+  },
+  "language": "zh-CN",
+  "feishu": {
+    "appId": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "domain": "feishu"
+  },
+  "acp": {
+    "executor": "opencode"
+  }
+}
+```
+
+这里最需要替换的只有 4 个值：
+
+- `project.path`：你的本地项目绝对路径
+- `project.name`：这个项目在 Baton 里的显示名称
+- `feishu.appId`：飞书应用 App ID
+- `feishu.appSecret`：飞书应用 App Secret
+
+如果你不想把密钥写进文件，推荐改用环境变量：
+
+```bash
+export BATON_FEISHU_APP_ID=cli_xxx
+export BATON_FEISHU_APP_SECRET=xxx
+export BATON_EXECUTOR=opencode
+```
+
+### 5. 先用飞书启动
+
+```bash
+baton feishu
+```
+
+如果配置文件里已经有 `feishu.appId` 和 `feishu.appSecret`，也可以直接运行：
+
+```bash
+baton
+```
+
+此时会自动进入飞书模式。
+
+如果你只是想先验证本地链路是否正常，也可以先用 CLI 模式：
+
+```bash
+baton cli
+```
+
+### 其他安装方式
 
 从 [Releases](https://github.com/williamfzc/baton/releases) 下载对应平台的二进制文件：
 
@@ -36,19 +156,13 @@ mkdir -p ~/.local/bin
 mv baton-* ~/.local/bin/baton
 ```
 
-如果 `~/.local/bin` 不在 PATH 中，加入你的 shell 配置文件（如 `~/.zshrc`）：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
 ### 从源码运行
 
 ```bash
 git clone https://github.com/williamfzc/baton.git
 cd baton
 bun install
-bun run start:feishu
+bun run start:cli
 ```
 
 ## 支持的 IM 平台
@@ -74,23 +188,9 @@ Baton 基于 [ACP 协议](https://agentclientprotocol.org/)，目前支持以下
 
 > ACP 是开放协议，未来将支持更多兼容 ACP 的 Runtime。
 
-### ACP Runtime 安装链接
-
-为避免找不到安装入口，建议直接使用下列官方仓库：
-
-- Codex ACP: https://github.com/zed-industries/codex-acp
-- Claude Code ACP: https://github.com/zed-industries/claude-code-acp
-
-安装完成后请确认命令可用：
-
-```bash
-codex-acp --help
-claude-code-acp --help
-```
-
 ## 快速开始
 
-### 1. 配置
+### 1. 配置参考（完整版）
 
 创建 `baton.config.json`：
 
@@ -100,7 +200,7 @@ claude-code-acp --help
     "path": "/path/to/your/project",
     "name": "my-project"
   },
-  "language": "en",
+  "language": "zh-CN",
   "feishu": {
     "appId": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
