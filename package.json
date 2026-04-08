@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Connect IM with local ACP agents",
   "type": "module",
   "main": "src/cli.ts",
@@ -38,7 +38,7 @@
     "test:new": "bun test tests/new-architecture.test.ts"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.14.1",
+    "@agentclientprotocol/sdk": "^0.18.1",
     "@larksuiteoapi/node-sdk": "^1.58.0",
     "pino": "^10.3.0",
     "pino-pretty": "^13.1.3"

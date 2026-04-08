@@ -37,7 +37,17 @@ case $ARCH in
 esac
 
 echo "正在检测最新版本..."
-LATEST_VERSION=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+LATEST_VERSION=""
+
+API_JSON=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
+if [ -n "$API_JSON" ]; then
+  LATEST_VERSION=$(echo "$API_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+fi
+
+if [ -z "$LATEST_VERSION" ]; then
+  TAG_URL=$(curl -fsSI "https://github.com/$REPO/releases/latest" | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}' | tail -n 1)
+  LATEST_VERSION="${TAG_URL##*/}"
+fi
 
 if [ -z "$LATEST_VERSION" ]; then
   echo "无法获取最新版本"
@@ -52,7 +62,7 @@ FILENAME="baton-$PLATFORM-$ARCH.tar.gz"
 DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST_VERSION/$FILENAME"
 
 echo "正在下载 baton..."
-curl -L -o /tmp/baton.tar.gz "$DOWNLOAD_URL"
+curl -fL -o /tmp/baton.tar.gz "$DOWNLOAD_URL"
 
 echo "正在解压..."
 tar -xzf /tmp/baton.tar.gz -C /tmp

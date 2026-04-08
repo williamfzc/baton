@@ -399,7 +399,16 @@ export class FeishuAdapter extends BaseIMAdapter {
         this.updateSessionMessageContext(session.id, message.chat_id, newMessageId);
       }
     } catch (error) {
-      logger.error(error, 'Error handling message');
+      logger.error(
+        {
+          err: error,
+          message_id: data?.message?.message_id,
+          chat_id: data?.message?.chat_id,
+          sender_id: data?.sender?.sender_id,
+          sender_type: data?.sender?.sender_type,
+        },
+        'Error handling message'
+      );
     }
   }
 

@@ -104,18 +104,19 @@ export interface ACPConfig {
   // 环境变量
   env?: Record<string, string>;
 
-  // Executor 类型（opencode, claude-code, codex）
+  // Executor 类型（opencode, claude-code, codex, claude-agent-acp）
   executor?: ACPEXecutor;
 }
 
 // 支持的 ACP Executor 类型
-export type ACPEXecutor = 'opencode' | 'claude-code' | 'codex';
+export type ACPEXecutor = 'opencode' | 'claude-code' | 'codex' | 'claude-agent-acp';
 
 // Executor 配置映射
 export const EXECUTOR_COMMANDS: Record<ACPEXecutor, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
   'claude-code': { command: 'claude-code-acp', args: [] },
   codex: { command: 'codex-acp', args: [] },
+  'claude-agent-acp': { command: 'claude-agent-acp', args: [] },
 };
 
 // 默认配置

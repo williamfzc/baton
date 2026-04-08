@@ -21,7 +21,7 @@ import type {
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
   ReleaseTerminalRequest,
-  KillTerminalCommandRequest,
+  KillTerminalRequest,
   StopReason,
   Client,
   PermissionOption,
@@ -304,7 +304,7 @@ class BatonClient implements Client {
   }
 
   // 强杀终端命令
-  async killTerminal(params: KillTerminalCommandRequest): Promise<void> {
+  async killTerminal(params: KillTerminalRequest): Promise<void> {
     const terminal = this.terminals.get(params.terminalId);
     if (terminal && terminal.process.exitCode === null) {
       terminal.process.kill('SIGTERM');
@@ -462,6 +462,10 @@ export class ACPClient {
           command = 'claude-code-acp';
           args = [];
           break;
+        case 'claude-agent-acp':
+          command = 'claude-agent-acp';
+          args = [];
+          break;
         case 'codex':
           command = 'codex-acp';
           args = [];
@@ -476,77 +480,103 @@ export class ACPClient {
 
     logger.info(`[ACP] Starting ${this.executor} (${command} ${args.join(' ')}) in ${cwd}`);
 
-    // 启动 ACP 进程
-    this.agentProcess = spawn(command, args, {
-      cwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    try {
+      // 启动 ACP 进程
+      this.agentProcess = spawn(command, args, {
+        cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
 
-    if (!this.agentProcess.pid) {
-      throw new Error('Failed to start agent process');
-    }
-    const pid = this.agentProcess.pid;
-    logger.info(`[ACP] Agent started with PID: ${pid}`);
-
-    this.agentProcess.stderr?.on('data', (buf: Buffer) => {
-      if (process.env.BATON_ACP_STDERR === '1') {
-        const text = String(buf);
-        logger.warn({ len: text.length, preview: text.slice(0, 800) }, '[ACP] Agent stderr');
+      if (!this.agentProcess.pid) {
+        throw new Error('Failed to start agent process');
       }
-    });
+      const pid = this.agentProcess.pid;
+      logger.info(`[ACP] Agent started with PID: ${pid}`);
 
-    // 创建流
-    if (!this.agentProcess.stdin || !this.agentProcess.stdout) {
-      throw new Error('Failed to initialize agent streams');
-    }
-    const input = Writable.toWeb(this.agentProcess.stdin) as unknown as WritableStream<Uint8Array>;
-    const output = Readable.toWeb(
-      this.agentProcess.stdout
-    ) as unknown as ReadableStream<Uint8Array>;
+      this.agentProcess.stderr?.on('data', (buf: Buffer) => {
+        if (process.env.BATON_ACP_STDERR === '1') {
+          const text = String(buf);
+          logger.warn({ len: text.length, preview: text.slice(0, 800) }, '[ACP] Agent stderr');
+        }
+      });
 
-    // 创建 ACP 流
-    const stream = acp.ndJsonStream(input, output);
+      // 创建流
+      if (!this.agentProcess.stdin || !this.agentProcess.stdout) {
+        throw new Error('Failed to initialize agent streams');
+      }
+      const input = Writable.toWeb(
+        this.agentProcess.stdin
+      ) as unknown as WritableStream<Uint8Array>;
+      const output = Readable.toWeb(
+        this.agentProcess.stdout
+      ) as unknown as ReadableStream<Uint8Array>;
 
-    // 创建客户端连接
-    this.connection = new acp.ClientSideConnection(() => this.batonClient, stream);
+      // 创建 ACP 流
+      const stream = acp.ndJsonStream(input, output);
 
-    // 初始化连接
-    logger.info('[ACP] Initializing connection...');
-    const initResult = await this.connection.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: {
-          readTextFile: true,
-          writeTextFile: true,
+      // 创建客户端连接
+      this.connection = new acp.ClientSideConnection(() => this.batonClient, stream);
+
+      // 初始化连接
+      logger.info('[ACP] Initializing connection...');
+      const initResult = await this.connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+          terminal: true,
         },
-        terminal: true,
-      },
-    });
+      });
 
-    logger.info(`[ACP] Connected (protocol v${initResult.protocolVersion})`);
+      logger.info(`[ACP] Connected (protocol v${initResult.protocolVersion})`);
 
-    // 创建新会话
-    logger.info('[ACP] Creating new session...');
-    const sessionResult = await this.connection.newSession({
-      cwd: this.projectPath,
-      mcpServers: [],
-    });
+      // 创建新会话
+      logger.info('[ACP] Creating new session...');
+      const sessionResult = await this.connection.newSession({
+        cwd: this.projectPath,
+        mcpServers: [],
+      });
 
-    const sessionResultWithSessionId = sessionResult as { sessionId: string };
-    this.currentSessionId = sessionResultWithSessionId.sessionId;
+      const sessionResultWithSessionId = sessionResult as { sessionId: string };
+      this.currentSessionId = sessionResultWithSessionId.sessionId;
 
-    // 捕获初始模式和模型
-    if (sessionResult.modes) {
-      this.batonClient.availableModes = sessionResult.modes.availableModes;
-      this.batonClient.currentModeId = sessionResult.modes.currentModeId;
+      // 捕获初始模式和模型
+      if (sessionResult.modes) {
+        this.batonClient.availableModes = sessionResult.modes.availableModes;
+        this.batonClient.currentModeId = sessionResult.modes.currentModeId;
+      }
+      if (sessionResult.models) {
+        this.batonClient.availableModels = sessionResult.models.availableModels;
+        this.batonClient.currentModelId = sessionResult.models.currentModelId;
+      }
+
+      logger.info(`[ACP] Session created: ${sessionResult.sessionId}`);
+    } catch (error) {
+      logger.error(
+        {
+          err: error,
+          executor: this.executor,
+          command,
+          args,
+          cwd,
+          projectPath: this.projectPath,
+          customCommand: Boolean(this.launchConfig?.command),
+        },
+        '[ACP] Failed to start/initialize session'
+      );
+
+      if (this.agentProcess && this.agentProcess.exitCode === null) {
+        this.agentProcess.kill();
+      }
+      this.agentProcess = null;
+      this.connection = null;
+      this.currentSessionId = null;
+
+      throw error;
     }
-    if (sessionResult.models) {
-      this.batonClient.availableModels = sessionResult.models.availableModels;
-      this.batonClient.currentModelId = sessionResult.models.currentModelId;
-    }
-
-    logger.info(`[ACP] Session created: ${sessionResult.sessionId}`);
   }
 
   async stop(): Promise<void> {
