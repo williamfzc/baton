@@ -72,6 +72,7 @@ class BatonClient implements Client {
     resolve: (value: string) => void;
     reject: (error: Error) => void;
   } | null = null;
+  private responseIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private permissionHandler: PermissionHandler;
   private terminals: Map<string, { process: ChildProcessWithoutNullStreams; output: string[] }> =
     new Map();
@@ -91,11 +92,28 @@ class BatonClient implements Client {
   // 处理会话更新（agent 发来的消息）
   async sessionUpdate(params: SessionNotification): Promise<void> {
     const update = params.update;
+    if (process.env.BATON_ACP_TRACE === '1') {
+      logger.debug({ type: update.sessionUpdate }, '[ACP] sessionUpdate');
+    }
 
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
         if (update.content.type === 'text') {
-          this.messageBuffer.push(update.content.text);
+          const text = (update.content as unknown as { text: string }).text;
+          this.messageBuffer.push(text);
+          if (this.responsePromise) {
+            if (this.responseIdleTimer) {
+              clearTimeout(this.responseIdleTimer);
+            }
+            this.responseIdleTimer = setTimeout(() => {
+              if (!this.responsePromise) return;
+              const fullResponse = this.messageBuffer.join('');
+              this.messageBuffer = [];
+              this.responsePromise.resolve(fullResponse);
+              this.responsePromise = null;
+              this.responseIdleTimer = null;
+            }, 800);
+          }
         }
         break;
 
@@ -300,6 +318,10 @@ class BatonClient implements Client {
         const partial = this.messageBuffer.join('');
         this.messageBuffer = [];
         this.responsePromise = null;
+        if (this.responseIdleTimer) {
+          clearTimeout(this.responseIdleTimer);
+          this.responseIdleTimer = null;
+        }
         resolve(partial || '[Response timeout]');
       }, timeout);
 
@@ -307,11 +329,19 @@ class BatonClient implements Client {
         resolve: (value: string) => {
           clearTimeout(timer);
           this.responsePromise = null;
+          if (this.responseIdleTimer) {
+            clearTimeout(this.responseIdleTimer);
+            this.responseIdleTimer = null;
+          }
           resolve(value);
         },
         reject: (error: Error) => {
           clearTimeout(timer);
           this.responsePromise = null;
+          if (this.responseIdleTimer) {
+            clearTimeout(this.responseIdleTimer);
+            this.responseIdleTimer = null;
+          }
           reject(error);
         },
       };
@@ -324,6 +354,10 @@ class BatonClient implements Client {
       const fullResponse = this.messageBuffer.join('');
       this.messageBuffer = [];
       this.responsePromise.resolve(fullResponse || `[Completed: ${stopReason}]`);
+      if (this.responseIdleTimer) {
+        clearTimeout(this.responseIdleTimer);
+        this.responseIdleTimer = null;
+      }
     }
   }
 
@@ -455,6 +489,13 @@ export class ACPClient {
     const pid = this.agentProcess.pid;
     logger.info(`[ACP] Agent started with PID: ${pid}`);
 
+    this.agentProcess.stderr?.on('data', (buf: Buffer) => {
+      if (process.env.BATON_ACP_STDERR === '1') {
+        const text = String(buf);
+        logger.warn({ len: text.length, preview: text.slice(0, 800) }, '[ACP] Agent stderr');
+      }
+    });
+
     // 创建流
     if (!this.agentProcess.stdin || !this.agentProcess.stdout) {
       throw new Error('Failed to initialize agent streams');
@@ -540,12 +581,20 @@ export class ACPClient {
     }
 
     logger.info(`[ACP] Sending prompt: ${prompt.substring(0, 50)}...`);
+    const startedAt = Date.now();
+    if (process.env.BATON_ACP_TRACE === '1') {
+      setTimeout(() => {
+        logger.warn(
+          { elapsedMs: Date.now() - startedAt, acpSessionId: this.currentSessionId },
+          '[ACP] sendPrompt still pending after 10s'
+        );
+      }, 10000);
+    }
 
     // 启动等待响应
     const responsePromise = this.batonClient.waitForResponse();
 
-    // 发送 prompt
-    const promptResult = await this.connection.prompt({
+    const promptPromise = this.connection.prompt({
       sessionId: this.currentSessionId,
       prompt: [
         {
@@ -555,15 +604,35 @@ export class ACPClient {
       ],
     });
 
-    // Prompt 完成，触发响应
-    this.batonClient.onPromptComplete(promptResult.stopReason);
+    void promptPromise
+      .then(promptResult => {
+        if (process.env.BATON_ACP_TRACE === '1') {
+          logger.debug(
+            {
+              elapsedMs: Date.now() - startedAt,
+              stopReason: String(promptResult.stopReason),
+            },
+            '[ACP] prompt returned'
+          );
+        }
+        this.batonClient.onPromptComplete(promptResult.stopReason);
+      })
+      .catch(err => {
+        logger.error({ err: String(err) }, '[ACP] prompt failed');
+      });
 
     // 等待完整响应
     const response = await responsePromise;
+    if (process.env.BATON_ACP_TRACE === '1') {
+      logger.debug(
+        { elapsedMs: Date.now() - startedAt, responseLen: response.length },
+        '[ACP] response resolved'
+      );
+    }
 
     return {
       success: true,
-      message: response || `[Completed: ${promptResult.stopReason}]`,
+      message: response || '[No response]',
     };
   }
 

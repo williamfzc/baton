@@ -42,10 +42,7 @@ function parseArgs(argv: string[]): {
         !['auto', 'cli', 'feishu', 'telegram', 'whatsapp', 'slack', 'discord'].includes(value)
       ) {
         throw new Error(
-          `${t('main', 'invalidModePrefix')}${value ?? t('main', 'emptyValue')}${t(
-            'main',
-            'invalidModeSuffix'
-          )}`
+          `${t('main', 'invalidModePrefix')}${value ?? t('main', 'emptyValue')}${t('main', 'invalidModeSuffix')}`
         );
       }
       mode = value as RunMode;
@@ -130,8 +127,7 @@ async function main() {
     const config = loadConfig(configPath);
 
     const hasWhatsAppWacliConfig =
-      !!config.whatsapp?.wacli?.storeDir ||
-      !!config.whatsapp?.wacli?.bin;
+      !!config.whatsapp?.wacli?.storeDir || !!config.whatsapp?.wacli?.bin;
 
     if (config.feishu?.appId && config.feishu?.appSecret) {
       logger.info(t('main', 'detectFeishu'));
